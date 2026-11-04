@@ -1,0 +1,2 @@
+One initial Alembic migration. Apply with: flask --app wsgi db upgrade
+DO NOT run the migration against the school's PostgreSQL until you have permission to create tables.
