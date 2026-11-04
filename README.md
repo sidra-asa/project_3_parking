@@ -39,7 +39,7 @@ pip install -r requirements-dev.txt
 cp .env.example .env   # Windows 可手動複製
 ```
 
-編輯 `.env`；填寫學校 PostgreSQL 的 **主機、資料庫、帳號、密碼、TLS 參數**。請勿上傳 `.env` 或分享學校密碼。
+編輯 `.env`；填寫學校 PostgreSQL 的 **主機、資料庫、帳號、密碼、TLS 參數**。請勿上傳 `.env`。
 
 ```dotenv
 DATABASE_URL=postgresql+psycopg://USERNAME:PASSWORD@DB_HOST:5432/DB_NAME?sslmode=require
