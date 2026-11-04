@@ -1,0 +1,21 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="row justify-content-center align-items-center min-vh-65">
+  <div class="col-md-7 col-lg-5 col-xl-4">
+    <div class="card shadow-sm border-0 login-card"><div class="card-body p-4 p-lg-5">
+      <p class="text-primary fw-semibold small mb-1">CAMPUS PARKING MANAGEMENT</p>
+      <h1 class="h3 fw-bold mb-2">登入管理系統</h1>
+      <p class="text-secondary mb-4">請使用課堂專題管理員建立的帳號。</p>
+      <form id="loginForm">
+        <label class="form-label" for="username">使用者名稱</label>
+        <input class="form-control mb-3" type="text" id="username" autocomplete="username" required maxlength="50">
+        <label class="form-label" for="password">密碼</label>
+        <input class="form-control mb-4" type="password" id="password" autocomplete="current-password" required>
+        <button class="btn btn-primary w-100" type="submit" id="submitLogin">登入</button>
+      </form>
+      <p class="small text-danger mt-3 mb-0" id="loginError" role="alert"></p>
+    </div></div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static',filename='js/login.js') }}"></script>{% endblock %}
