@@ -1,0 +1,34 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-4">
+ <div><div class="eyebrow">DATA MANAGEMENT</div><h1 class="h2 fw-bold mb-1">{{ title }}</h1><p class="text-secondary">{% if resource == 'vehicles' %}僅顯示曾辦理學年度停車證的校內車輛；臨停車輛不建立車主資料。{% elif resource == 'parking-records' %}每筆停車只保留車牌、區域與進出場資訊。{% else %}透過 Flask REST API 管理 PostgreSQL 資料。{% endif %}</p></div>
+ {% if current_user.role == 'ADMIN' %}<button class="btn btn-primary" id="newBtn">＋ 新增資料</button>{% endif %}
+</div>
+<div class="card border-0 shadow-sm"><div class="card-body">
+  <form id="searchForm" class="row gx-2 gy-2 align-items-center mb-3" role="search">
+    <div class="col-12 col-md-6 col-lg-5">
+      <label class="visually-hidden" for="searchInput">搜尋資料</label>
+      <input id="searchInput" type="search" class="form-control" maxlength="100" autocomplete="off" placeholder="輸入搜尋關鍵字" aria-label="搜尋資料">
+    </div>
+    <div class="col-12 col-sm-6 col-md-3 col-lg-3" id="filterWrap" hidden>
+      <label class="visually-hidden" for="filterSelect">篩選條件</label>
+      <select id="filterSelect" class="form-select" aria-label="篩選條件"></select>
+    </div>
+    <div class="col-auto"><button type="submit" class="btn btn-outline-primary">搜尋</button></div>
+    <div class="col-auto"><button type="button" class="btn btn-outline-secondary" id="clearSearchBtn">清除</button></div>
+  </form>
+  <div class="d-flex gap-2 align-items-center justify-content-between mb-3 flex-wrap">
+    <span id="countLabel" class="small text-secondary" aria-live="polite">正在讀取資料…</span>
+    <button type="button" class="btn btn-sm btn-outline-secondary" id="refreshBtn">重新整理</button>
+  </div>
+  <div class="table-responsive"><table class="table table-hover align-middle table-sm"><thead><tr id="tableHead"></tr></thead><tbody id="tableBody"><tr><td>讀取中…</td></tr></tbody></table></div>
+  <div class="d-flex align-items-center justify-content-end gap-3 mt-3"><span class="small text-secondary" id="pageInfo"></span><button class="btn btn-sm btn-outline-secondary" id="prevBtn">上一頁</button><button class="btn btn-sm btn-outline-secondary" id="nextBtn">下一頁</button></div>
+</div></div>
+<div class="modal fade" id="editModal" tabindex="-1" aria-labelledby="modalTitle" aria-hidden="true"><div class="modal-dialog modal-lg"><div class="modal-content">
+<div class="modal-header"><h2 class="modal-title h5" id="modalTitle">新增資料</h2><button class="btn-close" type="button" data-bs-dismiss="modal" aria-label="關閉"></button></div>
+<form id="editForm"><div class="modal-body"><div id="formFields" class="row g-3"></div><div id="formHelp" class="small text-secondary mt-3"></div></div><div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">取消</button><button type="submit" class="btn btn-primary" id="saveBtn">儲存</button></div></form>
+</div></div></div>
+<div class="modal fade" id="actionModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog"><div class="modal-content"><div class="modal-header"><h2 class="h5 modal-title" id="actionTitle">確認操作</h2><button class="btn-close" type="button" data-bs-dismiss="modal" aria-label="關閉"></button></div><form id="actionForm"><div class="modal-body"><div id="actionMessage"></div><div id="actionField"></div></div><div class="modal-footer"><button class="btn btn-outline-secondary" type="button" data-bs-dismiss="modal">取消</button><button class="btn btn-primary" type="submit">確認</button></div></form></div></div></div>
+<script type="application/json" id="pageConfig">{{ {'resource': resource, 'isAdmin': current_user.role == 'ADMIN'}|tojson }}</script>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static',filename='js/resource.js') }}"></script>{% endblock %}
