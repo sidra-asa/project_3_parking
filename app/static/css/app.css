@@ -7,18 +7,23 @@ body { background:#f5f7fa; color:var(--ink); font-family:system-ui,-apple-system
 .btn-primary { background:#245fa5; border-color:#245fa5; }
 .btn-primary:hover { background:#164d8e; border-color:#164d8e; }
 .form-control,.form-select { border-radius:8px; border-color:#d8e1ea; }
-.eyebrow { letter-spacing:1.7px; color:var(--blue); font-size:.72rem; font-weight:700; margin-bottom:6px; }
 .metric { border:1px solid var(--line); }
 .metric-label { color:var(--muted); font-size:.88rem; }
 .metric-value { font-size:2rem; font-weight:750; letter-spacing:-1.2px; margin-top:8px; }
 .chart-box { position:relative; height:280px; }
-.table thead th { background:#f3f6f9; color:#50647b; text-transform:uppercase; font-size:.78rem; font-weight:700; white-space:nowrap; padding:12px; }
+.table thead th { background:#f3f6f9; color:#50647b; font-size:.78rem; font-weight:700; white-space:nowrap; padding:12px; }
 .table tbody td { padding:11px 12px; white-space:nowrap; vertical-align:middle; }
+.table thead th.column-id,.table tbody td.column-id { color:#8091a4; font-size:.78rem; }
 .login-card { margin-top:2rem; }
 .min-vh-65 { min-height:65vh; }
 .occ-title { font-size:.89rem; font-weight:600; }
 .occ-bar { height:10px; border-radius:10px; }
-@media (max-width:575px) { .metric-value { font-size:1.6rem; } .chart-box { height:240px; } }
 .chart-box-wide { height:320px; }
 .info-value { font-size:1.3rem; font-weight:700; }
-@media (max-width: 575px) { .chart-box-wide { height:270px; } }
+.quick-link { display:flex; flex-direction:column; gap:.35rem; background:#fff; padding:1.2rem; border:1px solid var(--line); border-radius:14px; text-decoration:none; min-height:108px; transition:border-color .15s,box-shadow .15s; }
+.quick-link strong { color:var(--ink); }
+.quick-link span { color:var(--muted); font-size:.88rem; }
+.quick-link:hover,.quick-link:focus-visible { border-color:#7ca3ca; box-shadow:0 4px 18px rgba(24,55,90,.09); }
+.analytics-tabs .nav-link { border:1px solid var(--line); background:white; color:#2e4e71; border-radius:10px; }
+.analytics-tabs .nav-link.active { background:#245fa5; border-color:#245fa5; color:white; }
+@media (max-width:575px) { .metric-value { font-size:1.6rem; } .chart-box { height:240px; } .chart-box-wide { height:270px; } }

@@ -1,19 +1,51 @@
 {% extends 'base.html' %}
 {% block content %}
-<div class="mb-4"><div class="eyebrow">DATABASE · GROUP BY / LEFT JOIN</div><h1 class="h2 fw-bold">延伸分析</h1><p class="text-secondary">停車證使用效率、停留時間及臨時停車收入。資料為課堂模擬資料。</p></div>
-<form id="detailFilters" class="card card-body border-0 shadow-sm mb-4 row gx-3 gy-2 d-flex flex-row align-items-end">
-  <div class="col-md-3"><label class="form-label" for="startDate">起始日期</label><input type="date" class="form-control" value="2026-06-01" id="startDate"></div>
-  <div class="col-md-3"><label class="form-label" for="endDate">結束日期</label><input type="date" class="form-control" value="2026-06-28" id="endDate"></div>
-  <div class="col-md-3"><label class="form-label" for="vehicleType">車種</label><select id="vehicleType" class="form-select"><option value="">所有車種</option><option value="CAR">汽車</option><option value="MOTORCYCLE">機車</option></select></div>
-  <div class="col-md-3"><button class="btn btn-primary w-100">更新</button></div>
-</form>
-<div class="row g-4">
-  <div class="col-lg-6"><div class="card h-100 border-0 shadow-sm"><div class="card-body"><h2 class="h5 fw-bold">停車證使用效率</h2><p class="text-secondary small">以有效且已繳費學年度證為母體，包含零次使用者（LEFT JOIN）</p><p class="h4" id="permitStats">載入中…</p><div id="permitUsage" class="small text-secondary"></div></div></div></div>
-  <div class="col-lg-6"><div class="card h-100 border-0 shadow-sm"><div class="card-body"><h2 class="h5 fw-bold">停留時間分布</h2><p class="text-secondary small">以已離場紀錄分組</p><div class="chart-box"><canvas id="durationChart"></canvas></div></div></div></div>
-  <div class="col-12"><div class="card border-0 shadow-sm"><div class="card-body"><h2 class="h5 fw-bold">已收款臨停收入 TOP 10</h2><p class="text-secondary small">依付款日加總，不包含學年度停車證收入</p><div class="chart-box chart-box-wide"><canvas id="revenueChart"></canvas></div></div></div></div>
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-3 mb-4">
+  <div><h1 class="h2 fw-bold mb-2">停車統計分析</h1><p class="text-secondary mb-0">從進場習慣、停車區使用到停車證與收費，查看不同面向的資料。</p></div>
+  <span class="badge rounded-pill bg-light text-secondary border py-2 px-3">課堂模擬資料</span>
+</div>
+<div class="card border-0 shadow-sm mb-4"><div class="card-body">
+  <form id="detailFilters" class="row g-3 align-items-end">
+    <div class="col-sm-6 col-lg-3"><label class="form-label" for="startDate">開始日期</label><input type="date" class="form-control" value="2026-06-01" id="startDate" required></div>
+    <div class="col-sm-6 col-lg-3"><label class="form-label" for="endDate">結束日期</label><input type="date" class="form-control" value="2026-06-28" id="endDate" required></div>
+    <div class="col-sm-6 col-lg-3"><label class="form-label" for="vehicleType">車種</label><select id="vehicleType" class="form-select"><option value="">所有車種</option><option value="CAR">汽車</option><option value="MOTORCYCLE">機車</option></select></div>
+    <div class="col-sm-6 col-lg-3"><button class="btn btn-primary w-100" type="submit">更新分析</button></div>
+  </form>
+  <p class="text-secondary small mt-3 mb-0">一般統計以進場日篩選；臨停收入依付款日期統計。固定情境比較與指定時間快照會另行標示。</p>
+</div></div>
+<ul class="nav nav-pills analytics-tabs mb-4 gap-2" id="analyticsTabs" role="tablist">
+  <li class="nav-item" role="presentation"><button class="nav-link active" id="trend-tab" data-bs-toggle="pill" data-bs-target="#trend-panel" type="button" role="tab" aria-controls="trend-panel" aria-selected="true">使用趨勢</button></li>
+  <li class="nav-item" role="presentation"><button class="nav-link" id="area-tab" data-bs-toggle="pill" data-bs-target="#area-panel" type="button" role="tab" aria-controls="area-panel" aria-selected="false">停車區域</button></li>
+  <li class="nav-item" role="presentation"><button class="nav-link" id="permit-tab" data-bs-toggle="pill" data-bs-target="#permit-panel" type="button" role="tab" aria-controls="permit-panel" aria-selected="false">停車證與收費</button></li>
+</ul>
+<div class="tab-content" id="analyticsPanels">
+  <section class="tab-pane fade show active" id="trend-panel" role="tabpanel" aria-labelledby="trend-tab" tabindex="0">
+    <div class="row g-4">
+      <div class="col-12"><div class="card border-0 shadow-sm"><div class="card-body"><h2 class="h5 fw-bold">不同身分的停車行為</h2><p class="small text-secondary">比較學生、教師、行政人員及未登記訪客的進場車次。</p><div class="chart-box chart-box-wide"><canvas id="chartIdentity"></canvas></div><div id="identitySummary" class="table-responsive small mt-3"></div></div></div></div>
+      <div class="col-12"><div class="card border-0 shadow-sm"><div class="card-body"><h2 class="h5 fw-bold">學期間與暑假進場時段比較</h2><p class="small text-secondary">固定比較 2026/6/1–6/14 與 6/15–6/28，每段 14 天。此圖僅套用車種篩選，不受上方日期範圍影響。</p><div class="chart-box chart-box-wide"><canvas id="chartHourPhase"></canvas></div></div></div></div>
+      <div class="col-12"><div class="card border-0 shadow-sm"><div class="card-body"><h2 class="h5 fw-bold">停留時間分布</h2><p class="small text-secondary">統計選定期間內已離場車次的停留時數。</p><div class="chart-box"><canvas id="durationChart"></canvas></div></div></div></div>
+    </div>
+  </section>
+  <section class="tab-pane fade" id="area-panel" role="tabpanel" aria-labelledby="area-tab" tabindex="0">
+    <div class="row g-4">
+      <div class="col-12"><div class="card border-0 shadow-sm"><div class="card-body"><h2 class="h5 fw-bold">停車區尖峰占用率 TOP 10</h2><p class="small text-secondary">依選定期間內的歷史最高占用比例排序，與進場車次不同。</p><div class="chart-box chart-box-wide"><canvas id="chartPeak"></canvas></div></div></div></div>
+      <div class="col-12"><div class="card border-0 shadow-sm"><div class="card-body">
+        <div class="d-flex justify-content-between align-items-start flex-wrap gap-3"><div><h2 class="h5 fw-bold">指定時間的歷史車位占用</h2><p class="small text-secondary">查詢過去某一時間點的在場車輛，不代表目前即時空位。</p></div>
+          <form id="snapshotForm" class="d-flex gap-2 align-items-end flex-wrap"><div><label class="form-label small" for="snapshotAt">查詢時間（台灣時間）</label><input type="datetime-local" class="form-control" id="snapshotAt" value="2026-06-28T18:00" required></div><button class="btn btn-outline-primary" type="submit">查詢占用</button></form>
+        </div>
+        <p class="small text-secondary mb-3" id="snapshotSummary" aria-live="polite">載入中…</p><div id="occupancyList" class="row g-3"></div>
+      </div></div></div>
+    </div>
+  </section>
+  <section class="tab-pane fade" id="permit-panel" role="tabpanel" aria-labelledby="permit-tab" tabindex="0">
+    <div class="row g-4">
+      <div class="col-12"><div class="card border-0 shadow-sm"><div class="card-body"><h2 class="h5 fw-bold">學年度停車證使用情況</h2><p class="small text-secondary">統計在選定期間有效且已付款的停車證，包含期間內未使用的停車證。</p><p class="h4" id="permitStats" aria-live="polite">載入中…</p><div id="permitUsage" class="small text-secondary"></div></div></div></div>
+      <div class="col-12"><div class="card border-0 shadow-sm"><div class="card-body"><h2 class="h5 fw-bold">臨時停車收入 TOP 10</h2><p class="small text-secondary">按付款日期統計已收款臨停費用，不包含學年度停車證收入。</p><div class="chart-box chart-box-wide"><canvas id="revenueChart"></canvas></div></div></div></div>
+    </div>
+  </section>
 </div>
 {% endblock %}
 {% block scripts %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.8/dist/chart.umd.min.js"></script>
-<script src="{{ url_for('static',filename='js/advanced_analytics.js') }}"></script>
+<script src="{{ url_for('static', filename='js/advanced_analytics.js') }}"></script>
 {% endblock %}

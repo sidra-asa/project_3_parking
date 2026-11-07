@@ -19,15 +19,15 @@ def login():
 @bp.get('/dashboard')
 @login_required
 def dashboard():
-    return render_template('dashboard.html', title='分析儀表板')
+    return render_template('dashboard.html', title='總覽')
 
 
 RESOURCES = {
     'campus-users': '校內使用者',
-    'vehicles': '車輛管理',
+    'vehicles': '登記車輛',
     'parking-areas': '停車區域',
     'parking-permits': '學年度停車證',
-    'parking-records': '停車紀錄',
+    'parking-records': '進出場與收費紀錄',
 }
 
 
@@ -46,13 +46,14 @@ def manage(resource):
 @bp.get('/analysis/extended')
 @login_required
 def advanced_analytics():
-    return render_template('advanced_analytics.html', title='延伸資料分析')
+    # Keep the existing route so previously shared links remain valid.
+    return render_template('advanced_analytics.html', title='統計分析')
 
 
 @bp.get('/people/<int:user_id>')
 @login_required
 def user_profile(user_id):
-    return render_template('user_profile.html', title='車主綜合查詢', user_id=user_id)
+    return render_template('user_profile.html', title='人員停車資料', user_id=user_id)
 
 
 @bp.get('/management/review')
@@ -60,4 +61,4 @@ def user_profile(user_id):
 def management_review():
     if current_user.role != 'ADMIN':
         abort(403)
-    return render_template('management_review.html', title='待處理清單')
+    return render_template('management_review.html', title='異常與待辦查詢')

@@ -4,45 +4,55 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="csrf-token" content="{{ csrf_token() }}">
-  <title>{{ title or 'Campus Parking' }} · project_3_parking</title>
+  <title>{{ title ~ ' · ' if title else '' }}校園車輛與停車管理系統</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-  <link href="{{ url_for('static',filename='css/app.css') }}" rel="stylesheet">
+  <link href="{{ url_for('static', filename='css/app.css') }}" rel="stylesheet">
 </head>
 <body>
-<nav class="navbar navbar-expand-lg navbar-dark app-navbar sticky-top">
+<nav class="navbar navbar-expand-lg navbar-dark app-navbar sticky-top" aria-label="主要導覽">
   <div class="container-fluid container-xl">
-    <a class="navbar-brand fw-bold" href="{{ url_for('web.home') }}">🅿️ project_3_parking</a>
+    <a class="navbar-brand fw-bold" href="{{ url_for('web.home') }}">校園停車管理</a>
     {% if current_user.is_authenticated %}
-    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#mainNavigation" aria-label="切換選單"><span class="navbar-toggler-icon"></span></button>
+    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#mainNavigation" aria-controls="mainNavigation" aria-expanded="false" aria-label="切換選單"><span class="navbar-toggler-icon"></span></button>
     <div class="collapse navbar-collapse" id="mainNavigation">
       <ul class="navbar-nav me-auto mb-2 mb-lg-0">
-        <li class="nav-item"><a class="nav-link {{ 'active' if request.path == '/dashboard' else '' }}" href="{{ url_for('web.dashboard') }}">分析儀表板</a></li>
-        <li class="nav-item"><a class="nav-link {{ 'active' if request.path == '/analysis/extended' else '' }}" href="{{ url_for('web.advanced_analytics') }}">延伸分析</a></li>
-        {% if current_user.role == 'ADMIN' %}<li class="nav-item"><a class="nav-link {{ 'active' if request.path == '/management/review' else '' }}" href="{{ url_for('web.management_review') }}">待處理清單</a></li>{% endif %}
-        <li class="nav-item dropdown"><a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">資料管理</a>
+        <li class="nav-item"><a class="nav-link {{ 'active' if request.path == '/dashboard' else '' }}" href="{{ url_for('web.dashboard') }}" {% if request.path == '/dashboard' %}aria-current="page"{% endif %}>總覽</a></li>
+        <li class="nav-item"><a class="nav-link {{ 'active' if request.path == '/analysis/extended' else '' }}" href="{{ url_for('web.advanced_analytics') }}" {% if request.path == '/analysis/extended' %}aria-current="page"{% endif %}>統計分析</a></li>
+        {% set parking_active = request.path.startswith('/manage/') and request.path != '/manage/accounts' or request.path.startswith('/people/') %}
+        <li class="nav-item dropdown">
+          <a class="nav-link dropdown-toggle {{ 'active' if parking_active else '' }}" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">停車管理</a>
           <ul class="dropdown-menu">
-            <li><a class="dropdown-item" href="/manage/campus-users">校內使用者</a></li>
-            <li><a class="dropdown-item" href="/manage/vehicles">車輛管理</a></li>
-            <li><a class="dropdown-item" href="/manage/parking-areas">停車區域</a></li>
-            <li><a class="dropdown-item" href="/manage/parking-permits">學年度停車證</a></li>
-            <li><a class="dropdown-item" href="/manage/parking-records">停車紀錄</a></li>
-            {% if current_user.role == 'ADMIN' %}<li><hr class="dropdown-divider"></li><li><a class="dropdown-item" href="/manage/accounts">網站帳號</a></li>{% endif %}
+            <li><h6 class="dropdown-header">人員與車輛</h6></li>
+            <li><a class="dropdown-item {{ 'active' if request.path == '/manage/campus-users' else '' }}" href="{{ url_for('web.manage', resource='campus-users') }}">校內使用者</a></li>
+            <li><a class="dropdown-item {{ 'active' if request.path == '/manage/vehicles' else '' }}" href="{{ url_for('web.manage', resource='vehicles') }}">登記車輛</a></li>
+            <li><hr class="dropdown-divider"></li>
+            <li><h6 class="dropdown-header">停車業務</h6></li>
+            <li><a class="dropdown-item {{ 'active' if request.path == '/manage/parking-permits' else '' }}" href="{{ url_for('web.manage', resource='parking-permits') }}">學年度停車證</a></li>
+            <li><a class="dropdown-item {{ 'active' if request.path == '/manage/parking-records' else '' }}" href="{{ url_for('web.manage', resource='parking-records') }}">進出場與收費紀錄</a></li>
+            <li><a class="dropdown-item {{ 'active' if request.path == '/manage/parking-areas' else '' }}" href="{{ url_for('web.manage', resource='parking-areas') }}">停車區域</a></li>
           </ul>
         </li>
+        {% if current_user.role == 'ADMIN' %}
+        <li class="nav-item"><a class="nav-link {{ 'active' if request.path == '/management/review' else '' }}" href="{{ url_for('web.management_review') }}">異常與待辦</a></li>
+        <li class="nav-item dropdown">
+          <a class="nav-link dropdown-toggle {{ 'active' if request.path == '/manage/accounts' else '' }}" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">系統管理</a>
+          <ul class="dropdown-menu"><li><a class="dropdown-item" href="{{ url_for('web.manage', resource='accounts') }}">網站帳號</a></li></ul>
+        </li>
+        {% endif %}
       </ul>
-      <span class="navbar-text small me-3">{{ current_user.username }} · {{ current_user.role }}</span>
-      <button class="btn btn-sm btn-outline-light" id="logoutBtn">登出</button>
+      <span class="navbar-text small me-3">{{ current_user.username }} · {{ '管理員' if current_user.role == 'ADMIN' else '檢視者' }}</span>
+      <button class="btn btn-sm btn-outline-light" id="logoutBtn" type="button">登出</button>
     </div>
     {% endif %}
   </div>
 </nav>
-<main class="container-xl py-4 py-md-5">
+<main class="container-xl py-4 py-md-5" id="mainContent">
   {% block content %}{% endblock %}
 </main>
-<footer class="container-xl py-4 text-center text-secondary small">資料庫課程專題 · 模擬停車紀錄不代表校方實際營運資訊</footer>
+<footer class="container-xl py-4 text-center text-secondary small">資料庫課程專題 · 網站資料為模擬情境，不代表學校實際停車或收費資訊</footer>
 <div id="alertHost" class="toast-container position-fixed top-0 end-0 p-3" style="z-index:1200" role="status" aria-live="polite"></div>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-<script src="{{ url_for('static',filename='js/api.js') }}"></script>
+<script src="{{ url_for('static', filename='js/api.js') }}"></script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

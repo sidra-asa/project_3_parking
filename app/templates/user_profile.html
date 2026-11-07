@@ -1,11 +1,10 @@
 {% extends 'base.html' %}
 {% block content %}
-<div class="d-flex align-items-start justify-content-between gap-3 flex-wrap mb-4"><div><div class="eyebrow">RELATIONAL DATABASE · MULTI-TABLE VIEW</div><h1 class="h2 fw-bold">校內人員綜合查詢</h1><p class="text-secondary">CampusUser → Vehicle → ParkingPermit / ParkingRecord → ParkingArea</p></div><a href="{{ url_for('web.manage', resource='campus-users') }}" class="btn btn-outline-secondary">返回使用者管理</a></div>
-<p class="text-secondary small">示範資料中的已登記車主資訊，不包含未登記訪客；歷史車輛可能有已到期的停車證。</p>
+<div class="d-flex align-items-start justify-content-between gap-3 flex-wrap mb-4"><div><h1 class="h2 fw-bold mb-2">人員停車資料</h1><p class="text-secondary mb-0">查看此人員的登記車輛、停車證，以及近期進出場紀錄。</p></div><a href="{{ url_for('web.manage', resource='campus-users') }}" class="btn btn-outline-secondary">返回校內使用者</a></div>
 <div class="card border-0 shadow-sm mb-4"><div class="card-body"><div id="personTitle" class="h4">載入中…</div><div id="personMeta" class="text-secondary"></div></div></div>
 <div class="row g-3 mb-4"><div class="col-sm-4"><div class="card card-body metric"><div class="metric-label">進場總車次</div><div class="metric-value" id="profileTrips">—</div></div></div><div class="col-sm-4"><div class="card card-body metric"><div class="metric-label">已完成停車時數</div><div class="metric-value" id="profileHours">—</div></div></div><div class="col-sm-4"><div class="card card-body metric"><div class="metric-label">最常用停車區</div><div class="h5 mt-3" id="profileArea">—</div></div></div></div>
-<div class="card border-0 shadow-sm mb-4"><div class="card-body"><h2 class="h5 fw-bold">登記車輛與停車證</h2><div id="vehicleCards" class="row g-3"></div></div></div>
-<div class="card border-0 shadow-sm"><div class="card-body"><h2 class="h5 fw-bold">近期停車紀錄（最多 20 筆）</h2><div class="table-responsive"><table class="table table-hover"><thead><tr><th>車牌</th><th>區域</th><th>進場</th><th>離場</th><th>費用</th></tr></thead><tbody id="recentRecords"></tbody></table></div></div></div>
+<div class="card border-0 shadow-sm mb-4"><div class="card-body"><h2 class="h5 fw-bold">登記車輛與學年度停車證</h2><div id="vehicleCards" class="row g-3"></div></div></div>
+<div class="card border-0 shadow-sm"><div class="card-body"><h2 class="h5 fw-bold">近期停車紀錄（最多 20 筆）</h2><div class="table-responsive"><table class="table table-hover"><thead><tr><th>車牌</th><th>停車區域</th><th>進場</th><th>離場</th><th>費用</th></tr></thead><tbody id="recentRecords"></tbody></table></div></div></div>
 {% endblock %}
 {% block scripts %}
 <script>const PROFILE_USER_ID={{ user_id|tojson }};</script>
