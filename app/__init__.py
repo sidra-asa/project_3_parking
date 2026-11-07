@@ -66,8 +66,10 @@ def create_app(test_config=None):
     from app.api.resources import bp as resources_bp
     from app.api.records import bp as records_bp
     from app.api.analytics import bp as analytics_bp
+    from app.api.analytics_extended import bp as extended_bp
+    from app.api.insights import bp as insights_bp
 
-    for bp in (web_bp, auth_bp, accounts_bp, resources_bp, records_bp, analytics_bp):
+    for bp in (web_bp, auth_bp, accounts_bp, resources_bp, records_bp, analytics_bp, extended_bp, insights_bp):
         app.register_blueprint(bp)
 
     @app.cli.command('create-admin')

@@ -1,0 +1,19 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="mb-4"><div class="eyebrow">DATABASE · GROUP BY / LEFT JOIN</div><h1 class="h2 fw-bold">延伸分析</h1><p class="text-secondary">停車證使用效率、停留時間及臨時停車收入。資料為課堂模擬資料。</p></div>
+<form id="detailFilters" class="card card-body border-0 shadow-sm mb-4 row gx-3 gy-2 d-flex flex-row align-items-end">
+  <div class="col-md-3"><label class="form-label" for="startDate">起始日期</label><input type="date" class="form-control" value="2026-06-01" id="startDate"></div>
+  <div class="col-md-3"><label class="form-label" for="endDate">結束日期</label><input type="date" class="form-control" value="2026-06-28" id="endDate"></div>
+  <div class="col-md-3"><label class="form-label" for="vehicleType">車種</label><select id="vehicleType" class="form-select"><option value="">所有車種</option><option value="CAR">汽車</option><option value="MOTORCYCLE">機車</option></select></div>
+  <div class="col-md-3"><button class="btn btn-primary w-100">更新</button></div>
+</form>
+<div class="row g-4">
+  <div class="col-lg-6"><div class="card h-100 border-0 shadow-sm"><div class="card-body"><h2 class="h5 fw-bold">停車證使用效率</h2><p class="text-secondary small">以有效且已繳費學年度證為母體，包含零次使用者（LEFT JOIN）</p><p class="h4" id="permitStats">載入中…</p><div id="permitUsage" class="small text-secondary"></div></div></div></div>
+  <div class="col-lg-6"><div class="card h-100 border-0 shadow-sm"><div class="card-body"><h2 class="h5 fw-bold">停留時間分布</h2><p class="text-secondary small">以已離場紀錄分組</p><div class="chart-box"><canvas id="durationChart"></canvas></div></div></div></div>
+  <div class="col-12"><div class="card border-0 shadow-sm"><div class="card-body"><h2 class="h5 fw-bold">已收款臨停收入 TOP 10</h2><p class="text-secondary small">依付款日加總，不包含學年度停車證收入</p><div class="chart-box chart-box-wide"><canvas id="revenueChart"></canvas></div></div></div></div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.8/dist/chart.umd.min.js"></script>
+<script src="{{ url_for('static',filename='js/advanced_analytics.js') }}"></script>
+{% endblock %}

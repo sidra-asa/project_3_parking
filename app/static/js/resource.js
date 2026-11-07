@@ -87,13 +87,14 @@ function act(label,fn,sty='outline-primary') {
 function renderTable() {
   head.replaceChildren();body.replaceChildren();
   for (const [,label] of def.columns) head.append(make('th','',label));
-  if (isAdmin || resource==='vehicles') head.append(make('th','','操作'));
-  if (!rows.length) { const tr=body.insertRow(),cell=tr.insertCell();cell.colSpan=def.columns.length+((isAdmin || resource==='vehicles')?1:0);cell.textContent=(searchQuery || selectedFilter)?'找不到符合搜尋條件的資料':'目前沒有資料';return; }
+  if (isAdmin || resource==='vehicles' || resource==='campus-users') head.append(make('th','','操作'));
+  if (!rows.length) { const tr=body.insertRow(),cell=tr.insertCell();cell.colSpan=def.columns.length+((isAdmin || resource==='vehicles' || resource==='campus-users')?1:0);cell.textContent=(searchQuery || selectedFilter)?'找不到符合搜尋條件的資料':'目前沒有資料';return; }
   for (const item of rows) {
     const tr=body.insertRow();
     for (const [key] of def.columns) tr.insertCell().textContent=fmt(item[key]);
-    if (!isAdmin && resource!=='vehicles') continue;
+    if (!isAdmin && !['vehicles','campus-users'].includes(resource)) continue;
     const buttons=tr.insertCell();
+    if (resource==='campus-users') buttons.append(act('綜合查詢',()=>{window.location.href=`/people/${item.user_id}`;}));
     if (resource==='vehicles') {
       buttons.append(act('查看停車證',()=>{window.location.href=`/manage/parking-permits?q=${encodeURIComponent(item.plate_no)}`;}));
     }

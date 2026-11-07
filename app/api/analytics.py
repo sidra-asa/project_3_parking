@@ -1,5 +1,5 @@
 """Read-only analytics APIs backed by the five business entities."""
-from datetime import timedelta
+from datetime import timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from flask import Blueprint, jsonify, request
@@ -33,10 +33,10 @@ def record_query():
         query = query.where(ParkingArea.vehicle_type == vehicle_type)
     tz = ZoneInfo('Asia/Taipei')
     if start:
-        query = query.where(ParkingRecord.entry_time >= datetime.combine(start, time.min, tzinfo=tz))
+        query = query.where(ParkingRecord.entry_time >= datetime.combine(start, time.min, tzinfo=tz).astimezone(timezone.utc))
     if end:
         query = query.where(ParkingRecord.entry_time <
-                            datetime.combine(end + timedelta(days=1), time.min, tzinfo=tz))
+                            datetime.combine(end + timedelta(days=1), time.min, tzinfo=tz).astimezone(timezone.utc))
     return query
 
 
@@ -157,9 +157,9 @@ def revenue():
         q = q.where(ParkingArea.vehicle_type == vt)
     tz = ZoneInfo('Asia/Taipei')
     if start:
-        q = q.where(ParkingRecord.paid_at >= datetime.combine(start, time.min, tzinfo=tz))
+        q = q.where(ParkingRecord.paid_at >= datetime.combine(start, time.min, tzinfo=tz).astimezone(timezone.utc))
     if end:
-        q = q.where(ParkingRecord.paid_at < datetime.combine(end + timedelta(days=1), time.min, tzinfo=tz))
+        q = q.where(ParkingRecord.paid_at < datetime.combine(end + timedelta(days=1), time.min, tzinfo=tz).astimezone(timezone.utc))
     r = q.subquery()
     stmt = db.select(ParkingArea.area_name,
                      func.coalesce(func.sum(r.c.parking_fee), 0).label('amount'))

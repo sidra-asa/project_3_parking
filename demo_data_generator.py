@@ -1,15 +1,22 @@
-"""Reproducible synthetic NSYSU-style parking activity; Python stdlib only.
+"""Deterministic, fictional NSYSU-style parking demo for the database course.
 
-Real-world reference: only the parking-area labels/capacities come from the
-115-02-23 NSYSU map supplied for the course. Vehicles, users, stay histories,
-traffic demand, permit assignments and simplified hourly rates are SYNTHETIC.
+This is not an official university dataset. Area labels/capacities are imported
+from the existing project file; population, permits, arrivals and fees are
+illustrative. No database connection is made by this module.
+
+Scenario: 2026-06-01 through 2026-06-28 (114 academic year), including
+regular classes, final exams, summer vacation and the Dragon Boat holiday.
+All 30,000 *entries* are on or before the 2026-06-28 18:00 +08:00 snapshot.
+A trip still parked at that instant has exit_time=None, rather than being
+added later as an unrelated synthetic open-stay record.
 """
 from __future__ import annotations
 
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal, ROUND_CEILING
 import heapq
+import math
 import random
 from zoneinfo import ZoneInfo
 
@@ -19,368 +26,451 @@ from campus_parking_areas import (
 )
 
 TAIPEI = ZoneInfo('Asia/Taipei')
-START_DATE = date(2026, 5, 1)
-END_DATE = date(2026, 10, 31)
-# These demand weights are illustrative. No real counts have been published.
-MONTH_WEIGHT = {5: 1.00, 6: 1.05, 7: 0.40, 8: 0.47, 9: 1.18, 10: 1.30}
-# Only dates explicitly recorded on the 115 academic calendar are included.
-FALL_HOLIDAYS = {date(2026, 9, 25), date(2026, 9, 28),
-                 date(2026, 10, 9), date(2026, 10, 26)}
+START_DATE = date(2026, 6, 1)
+END_DATE = date(2026, 6, 28)
+DEFAULT_AS_OF = datetime(2026, 6, 28, 18, 0, tzinfo=TAIPEI)
+HOLIDAYS = frozenset({date(2026, 6, 19)})
+# Weekly proportions, deliberately NOT observed NSYSU traffic statistics.
+WEEKLY_SHARES = (9900, 8900, 5200, 6000)
+USER_COUNTS = {'STUDENT': 11330, 'FACULTY': 740, 'STAFF': 930}
+PERMIT_COUNTS = {'CAR': 2033, 'MOTORCYCLE': 4608}
+
+STUDENT_DEPARTMENTS = (
+    '中國文學系', '外國語文學系', '音樂學系', '劇場藝術學系',
+    '資訊工程學系', '電機工程學系', '機械與機電工程學系',
+    '材料與光電科學學系', '光電工程學系', '化學系', '物理學系',
+    '應用數學系', '生物科學系', '企業管理學系', '財務管理學系',
+    '資訊管理學系', '政治經濟學系', '社會學系', '中國與亞太區域研究所',
+    '海洋科學系', '海洋環境及工程學系', '海洋生物科技暨資源學系',
+)
+OFFICE_DEPARTMENTS = (
+    '教務處', '學生事務處', '總務處', '研究發展處', '國際事務處',
+    '圖書與資訊處', '人事室', '主計室', '秘書室', '校務研究辦公室',
+)
 
 
-def _as_utc(local_dt):
-    return local_dt.astimezone(timezone.utc)
+def _as_utc(dt):
+    return dt.astimezone(timezone.utc)
 
 
 def _price(start, end, hourly_rate, permit_ref):
     if permit_ref is not None:
         return Decimal('0.00')
-    secs = Decimal(str((end - start).total_seconds()))
-    hours = (secs / Decimal(3600)).to_integral_value(rounding=ROUND_CEILING)
+    hours = (Decimal(str((end - start).total_seconds())) / Decimal(3600)).to_integral_value(
+        rounding=ROUND_CEILING)
     return (hours * hourly_rate).quantize(Decimal('0.01'))
 
 
 def _make_areas():
-    result = []
+    areas = []
     for no, name, spaces in CAR_AREAS:
-        # Simplified school-project rate, NOT the university fee table.
-        rate = 50 if no == 1 else 30
-        result.append(dict(id=len(result) + 1, area_name=name, vehicle_type='CAR',
-                           capacity=spaces, hourly_rate=Decimal(rate),
-                           map_no=no, visitor=(no in CAR_VISITOR_NUMBERS),
-                           popularity=1.45 if no in (1, 4, 9, 23, 28) else 1.0))
+        areas.append(dict(id=len(areas) + 1, area_name=name, vehicle_type='CAR',
+                          capacity=spaces, hourly_rate=Decimal(50 if no == 1 else 30),
+                          map_no=no, visitor=no in CAR_VISITOR_NUMBERS,
+                          popularity=1.4 if no in (1, 4, 9, 23) else 1.0))
     for no, name, spaces in MOTORCYCLE_AREAS:
-        # School visitor motorcycle parking is free. Permitted campus use also
-        # incurs no per-stay charge under this project Miniworld.
-        result.append(dict(id=len(result) + 1, area_name=name, vehicle_type='MOTORCYCLE',
-                           capacity=spaces, hourly_rate=Decimal('0'),
-                           map_no=no, visitor=(no in MOTORCYCLE_VISITOR_NUMBERS),
-                           popularity=1.45 if no in (1, 2, 5, 8, 13, 16, 17) else 1.0))
-    return result
+        areas.append(dict(id=len(areas) + 1, area_name=name,
+                          vehicle_type='MOTORCYCLE', capacity=spaces,
+                          hourly_rate=Decimal(0), map_no=no,
+                          visitor=no in MOTORCYCLE_VISITOR_NUMBERS,
+                          popularity=1.3 if no in (1, 2, 5, 8, 13, 16, 17) else 1.0))
+    return areas
 
 
 def _make_users(rng):
     surnames = '陳林黃張李王吳劉蔡楊許鄭謝郭洪曾邱廖賴周'
     first = '子承雅家柏冠志怡佳品俊思宇宥書韋庭宏彥慧'
     second = '廷安晴蓉翔寧萱偉豪穎柔恩涵潔軒妤澤欣'
-    student_depts = ('資訊工程學系', '電機工程學系', '企業管理學系',
-                     '海洋科學系', '機械與機電工程學系', '政治經濟學系',
-                     '應用數學系', '中國文學系', '化學系')
-    office_depts = ('總務處', '教務處', '圖書與資訊處', '學務處', '管理學院')
     users = []
-    for i in range(1, 1501):
-        typ = 'STUDENT' if i <= 1050 else 'FACULTY' if i <= 1275 else 'STAFF'
-        dept = rng.choice(student_depts if typ != 'STAFF' else office_depts)
-        name = rng.choice(surnames) + rng.choice(first) + rng.choice(second)
-        users.append(dict(id=i, name=name, identity_type=typ, department=dept, phone=None))
+    for typ, size in USER_COUNTS.items():
+        departments = OFFICE_DEPARTMENTS if typ == 'STAFF' else STUDENT_DEPARTMENTS
+        for _ in range(size):
+            users.append(dict(id=len(users) + 1,
+                              name=rng.choice(surnames) + rng.choice(first) + rng.choice(second),
+                              identity_type=typ, department=rng.choice(departments), phone=None))
     return users
 
 
 def _make_vehicles(rng, users):
-    """Applicant vehicles only. Unpermitted guests never enter this table."""
     students = [u['id'] for u in users if u['identity_type'] == 'STUDENT']
-    employees = [u['id'] for u in users if u['identity_type'] != 'STUDENT']
+    staff = [u['id'] for u in users if u['identity_type'] != 'STUDENT']
+    assigned = Counter()
     vehicles = []
-    # Offer sufficient applicants for 200 car + 400 motorcycle permits per year.
-    # Unselected applicants are removed after issuing the permits.
-    for i in range(1, 1051):
-        typ = 'CAR' if i <= 350 else 'MOTORCYCLE'
-        n = i if typ == 'CAR' else i - 350
-        if typ == 'CAR':
-            owners = employees if rng.random() < 0.70 else students
-        else:
-            owners = students if rng.random() < 0.83 else employees
-        owner = rng.choice(owners)
-        plate = f'DEMO-{"C" if typ == "CAR" else "M"}-{n:04d}'
-        vehicles.append(dict(id=i, plate_no=plate, vehicle_type=typ, user_ref=owner))
+    # About one car in ten is registered to a student. Employees may have two
+    # registered vehicles, but no user has more than three in this Miniworld.
+    for typ, n in PERMIT_COUNTS.items():
+        for k in range(1, n + 1):
+            student = rng.random() < (0.11 if typ == 'CAR' else 0.87)
+            pool = students if student else staff
+            owner = rng.choice(pool)
+            while assigned[owner] >= 3:
+                owner = rng.choice(pool)
+            assigned[owner] += 1
+            vehicles.append(dict(id=len(vehicles) + 1,
+                                 plate_no=f'DEMO-{"C" if typ == "CAR" else "M"}-{k:05d}',
+                                 vehicle_type=typ, user_ref=owner))
     return vehicles
 
 
 def _make_permits(rng, vehicles, users):
-    user_type = {u['id']: u['identity_type'] for u in users}
-    car = [v for v in vehicles if v['vehicle_type'] == 'CAR' and v['user_ref']]
-    moto = [v for v in vehicles if v['vehicle_type'] == 'MOTORCYCLE' and v['user_ref']]
-    # A subset renew for 115, so recurring commuting patterns span school years.
-    old_car, old_moto = [], []
-    result = []
-    for yr, start, end in [
-        ('114', date(2025, 11, 1), date(2026, 10, 31)),
-        ('115', date(2026, 11, 1), date(2027, 10, 31)),
-    ]:
-        def choose(pool, previous, n):
-            keep = rng.sample(previous, min(len(previous), n // 2)) if previous else []
-            chosen = {v['id'] for v in previous}
-            remainder = rng.sample([v for v in pool if v['id'] not in chosen], n - len(keep))
-            return keep + remainder
-        old_car = choose(car, old_car, 200)
-        old_moto = choose(moto, old_moto, 400)
-        for v in old_car + old_moto:
-            owner_type = user_type[v['user_ref']]
-            fee = Decimal('300.00') if v['vehicle_type'] == 'MOTORCYCLE' else (
-                Decimal('600.00') if owner_type == 'STUDENT' else Decimal('1000.00'))
-            # Issue/payment preceding the annual-validity start date.
-            issue = start - timedelta(days=rng.randint(20, 65))
-            # Include a handful of applications not yet paid, for admin screens.
-            paid = rng.random() < 0.97
-            payment_time = _as_utc(datetime.combine(
-                issue + timedelta(days=rng.randint(0, 7)), time(12, 0), tzinfo=TAIPEI))
-            result.append(dict(id=len(result) + 1, vehicle_ref=v['id'],
-                               academic_year=yr, issue_date=issue,
-                               valid_from=start, valid_to=end, permit_fee=fee,
-                               payment_method=rng.choice(('CARD', 'TRANSFER')) if paid else None,
-                               paid_at=payment_time if paid else None))
-    return result
+    types = {u['id']: u['identity_type'] for u in users}
+    begin, end = date(2025, 11, 1), date(2026, 10, 31)
+    permits = []
+    for v in vehicles:
+        owner_type = types[v['user_ref']]
+        fee = Decimal('300.00') if v['vehicle_type'] == 'MOTORCYCLE' else (
+            Decimal('600.00') if owner_type == 'STUDENT' else Decimal('1000.00'))
+        issue = begin - timedelta(days=rng.randint(12, 70))
+        if rng.random() < 0.06:
+            issue = begin + timedelta(days=rng.randint(1, 110))
+        is_paid = rng.random() < 0.985
+        paid_day = issue + timedelta(days=rng.randint(0, 7))
+        paid_at = _as_utc(datetime.combine(
+            paid_day, time(rng.randint(9, 18), rng.randrange(60)), tzinfo=TAIPEI)) if is_paid else None
+        permits.append(dict(id=len(permits) + 1, vehicle_ref=v['id'],
+                            academic_year='114', issue_date=issue,
+                            valid_from=begin, valid_to=end, permit_fee=fee,
+                            payment_method=rng.choice(('CARD', 'TRANSFER')) if is_paid else None,
+                            paid_at=paid_at))
+    return permits
 
 
-def _day_weight(d):
-    w = MONTH_WEIGHT[d.month]
-    if d.weekday() >= 5:
-        w *= 0.56
-    if d in FALL_HOLIDAYS:
-        w *= 0.52
-    if date(2026, 9, 1) <= d < date(2026, 9, 7):
-        w *= 0.66  # 115/9/7: start of classes
-    return w
+def _phase(day):
+    if day <= date(2026, 6, 7):
+        return 'classes'
+    if day <= date(2026, 6, 14):
+        return 'exams'
+    if day <= date(2026, 6, 21):
+        return 'summer_week_1'
+    return 'summer_week_2'
 
 
-def _choose_hour(rng, weekend, visitor):
-    # Weekend leisure and weekday commuter arrivals have distinct peaks.
+def _allocate_weighted(total, weights):
+    if total == 0:
+        return [0] * len(weights)
+    mass = sum(weights)
+    exact = [total * x / mass for x in weights]
+    base = [int(x) for x in exact]
+    for j in sorted(range(len(weights)), key=lambda i: (exact[i] - base[i], -i), reverse=True)[:total - sum(base)]:
+        base[j] += 1
+    return base
+
+
+def _daily_counts(total, snapshot):
+    # Keep week-by-week mix stable when count is changed via --records.
+    weeks = _allocate_weighted(total, WEEKLY_SHARES)
+    out = {}
+    for index, week_total in enumerate(weeks):
+        days = [START_DATE + timedelta(days=index * 7 + d) for d in range(7)]
+        weights = []
+        for day in days:
+            if day > snapshot.date():
+                weights.append(0)
+            elif day in HOLIDAYS:
+                weights.append(0.38)
+            elif day.weekday() >= 5:
+                weights.append(0.38 if index < 2 else 0.47)
+            else:
+                weights.append(1.0)
+        for day, n in zip(days, _allocate_weighted(week_total, weights)):
+            out[day] = n
+    return out
+
+
+def _user_profiles(rng, vehicles, users):
+    by_id = {u['id']: u for u in users}
+    profiles = {}
+    for v in vehicles:
+        u = by_id[v['user_ref']]
+        typ = u['identity_type']
+        dorm = typ == 'STUDENT' and v['vehicle_type'] == 'MOTORCYCLE' and rng.random() < 0.17
+        weekdays = tuple(sorted(rng.sample(range(5), rng.randint(3, 5) if typ != 'STUDENT'
+                                           else rng.randint(2, 5))))
+        if dorm:
+            arrival = rng.choice((10, 13, 17, 19))
+        elif typ == 'STAFF':
+            arrival = rng.choice((7, 8, 8, 8, 9))
+        elif typ == 'FACULTY':
+            arrival = rng.choice((8, 9, 10, 11, 13))
+        else:
+            arrival = rng.choice((8, 8, 9, 10, 13, 14))
+        profiles[v['id']] = dict(identity=typ, department=u['department'],
+                                 weekdays=weekdays, arrival=arrival, dorm=dorm,
+                                 energy=rng.uniform(0.6, 1.4))
+    return profiles
+
+
+def _dept_zone(department):
+    if any(s in department for s in ('資訊', '電機', '光電', '機械', '材料', '理工', '物理', '化學', '數學')):
+        return 'engineering'
+    if any(s in department for s in ('海洋', '海工', '海科', '海資')):
+        return 'marine'
+    if any(s in department for s in ('企業', '財務', '管理', '政治', '社會', '亞太')):
+        return 'management'
+    if any(s in department for s in ('文學', '中文', '外國', '音樂', '劇場', '藝術')):
+        return 'arts'
+    return 'administration'
+
+
+ZONE_AREAS = {
+    'CAR': {
+        'engineering': (7, 9, 10, 11), 'marine': (18, 19, 20, 21, 22, 23),
+        'management': (12, 13, 14, 15), 'arts': (24, 25, 26, 27),
+        'administration': (5, 6, 16, 17),
+    },
+    'MOTORCYCLE': {
+        'engineering': (1, 5, 7, 8), 'marine': (9, 10, 12),
+        'management': (1, 5, 7, 8), 'arts': (13, 14, 15),
+        'administration': (1, 3, 5, 7),
+    },
+}
+
+
+def _candidate_order(rng, pool, profiles, day, phase, visitor):
+    # Weighted permutation without replacement: recurring drivers are more
+    # likely to appear on familiar weekdays. Never assigns the same vehicle
+    # twice in a day. Results remain reproducible for a given RNG seed.
+    ranking = []
+    for vehicle in pool:
+        if visitor:
+            weight = (1.9 if vehicle['regular_guest'] else 0.65)
+            if day.weekday() >= 5:
+                weight *= 1.15
+        else:
+            prof = profiles[vehicle['id']]
+            weight = prof['energy']
+            if day.weekday() < 5:
+                weight *= 3.1 if day.weekday() in prof['weekdays'] else 0.18
+            elif prof['dorm']:
+                weight *= 0.5
+            else:
+                weight *= 0.20 if prof['identity'] == 'STUDENT' else 0.10
+            if phase.startswith('summer') and prof['identity'] == 'STUDENT':
+                weight *= 0.22 if not prof['dorm'] else 0.45
+            if phase == 'exams' and prof['identity'] == 'STUDENT':
+                weight *= 0.80
+            if vehicle['vehicle_type'] == 'CAR' and prof['identity'] == 'STUDENT':
+                weight *= 0.22  # student permit cars share only the 65-space seaside lot
+            if prof['dorm']:
+                weight *= 0.27  # few arrivals, but very long occupancy
+        score = -math.log(max(rng.random(), 1e-12)) / max(weight, 0.001)
+        ranking.append((score, vehicle['id'], vehicle))
+    ranking.sort(key=lambda item: (item[0], item[1]))
+    return [v for _, _, v in ranking]
+
+
+def _arrival(rng, day, visitor, profile, snapshot):
     if visitor:
-        weights = [0.03] * 24
-        for h, w in ((8, 0.8), (9, 1.4), (10, 3.5), (11, 4.2),
-                     (12, 3.6), (13, 4.8), (14, 4.1), (15, 3.7),
-                     (16, 2.6), (17, 1.5), (18, 1.1), (19, 0.5)):
-            weights[h] = w
-    elif weekend:
-        weights = [0.06] * 24
-        for h, w in ((7, 0.5), (8, 1.3), (9, 2.0), (10, 2.5),
-                     (11, 2.4), (12, 2.1), (13, 2.9), (14, 2.3),
-                     (15, 1.6), (16, 1.3), (17, 1.2), (18, 0.7)):
-            weights[h] = w
+        h = rng.choices((8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18),
+                        weights=(1, 2, 5, 7, 8, 9, 9, 8, 5, 3, 1), k=1)[0]
+    elif profile['dorm']:
+        h = max(7, min(21, round(rng.gauss(profile['arrival'], 2.0))))
     else:
-        weights = [0.03] * 24
-        for h, w in ((6, 0.5), (7, 2.6), (8, 8.0), (9, 6.4),
-                     (10, 2.7), (11, 1.3), (12, 2.1), (13, 4.3),
-                     (14, 2.4), (15, 1.0), (16, 0.7), (17, 0.9),
-                     (18, 0.5), (19, 0.3), (20, 0.2)):
-            weights[h] = w
-    return rng.choices(range(24), weights=weights, k=1)[0]
+        h = max(6, min(21, round(rng.gauss(profile['arrival'], 0.85))))
+        if day.weekday() >= 5:
+            h = max(8, h)
+    minute = rng.randrange(60)
+    entered = _as_utc(datetime.combine(day, time(h, minute), tzinfo=TAIPEI))
+    if entered > snapshot:
+        # June 28 has a fixed 18:00 snapshot: no post-snapshot arrivals.
+        entered = _as_utc(datetime.combine(day, time(rng.randint(9, 17), minute), tzinfo=TAIPEI))
+    return entered
 
 
-def _stay_minutes(rng, typ, visitor, owner_type, weekend):
+def _stay_minutes(rng, vehicle_type, visitor, profile, day, phase):
     if visitor:
-        return rng.randint(35, 230) if typ == 'CAR' else rng.randint(25, 290)
-    if typ == 'CAR':
-        if weekend:
-            return rng.randint(80, 300)
-        return rng.randint(410, 630) if owner_type != 'STUDENT' else rng.randint(180, 470)
-    # Dormitory-oriented scooter stays sometimes extend across midnight.
-    p = rng.random()
-    if owner_type == 'STUDENT' and p < 0.08:
-        return rng.randint(11 * 60, 35 * 60)
-    if weekend:
-        return rng.randint(90, 340)
-    return rng.randint(180, 570) if owner_type == 'STUDENT' else rng.randint(380, 610)
+        return rng.randint(35, 260) if vehicle_type == 'CAR' else rng.randint(25, 250)
+    if profile['dorm']:
+        return rng.randint(2 * 24 * 60, 7 * 24 * 60)
+    if profile['identity'] == 'STAFF':
+        return rng.randint(450, 620) if day.weekday() < 5 else rng.randint(80, 260)
+    if profile['identity'] == 'FACULTY':
+        return rng.randint(280, 630) if day.weekday() < 5 else rng.randint(90, 320)
+    if phase == 'exams':
+        return rng.randint(100, 330)
+    if phase.startswith('summer'):
+        return rng.randint(140, 450)
+    return rng.randint(180, 520)
 
 
-def build_demo_data(*, count=30000, active_count=450, seed=20261103, as_of=None):
-    """Return five in-memory tables; 30k records includes 450 open by default."""
-    if count <= 0 or not 0 <= active_count <= min(count, 2600):
-        raise ValueError('count must be positive and active_count within available vehicles')
-    now = as_of or datetime.now(timezone.utc)
-    if now.tzinfo is None:
-        raise ValueError('as_of needs an explicit timezone')
-    now = now.astimezone(timezone.utc)
-    local_now = now.astimezone(TAIPEI)
-    if not date(2026, 11, 1) <= local_now.date() <= date(2027, 10, 31):
-        raise ValueError('as_of must be in 115 permit year (2026-11-01..2027-10-31)')
+def build_demo_data(*, count=30000, active_count=None, seed=20261103, as_of=None):
+    """Five in-memory tables. `active_count` is deprecated; open stays emerge
+    from actual simulated trips crossing `as_of`, not an independent batch.
+    """
+    if not isinstance(count, int) or count <= 0:
+        raise ValueError('count must be a positive integer')
+    if active_count is not None:
+        raise ValueError('--active is no longer supported; open stays are derived at the snapshot')
+    snapshot = as_of if as_of is not None else DEFAULT_AS_OF
+    if snapshot.tzinfo is None:
+        raise ValueError('as_of must include a timezone')
+    snapshot = _as_utc(snapshot)
+    if snapshot.astimezone(TAIPEI).date() != END_DATE:
+        raise ValueError('as_of must fall on 2026-06-28 (the final simulated day)')
+    if not time(18, 0) <= snapshot.astimezone(TAIPEI).time() <= time(23, 59, 59):
+        raise ValueError('as_of must be between 18:00 and 23:59 Taiwan time')
 
     rng = random.Random(seed)
-    users = _make_users(rng)
-    areas = _make_areas()
-    applicants = _make_vehicles(rng, users)
-    permits = _make_permits(rng, applicants, users)
-    issued_vehicle_ids = {p['vehicle_ref'] for p in permits}
-    vehicles = [v for v in applicants if v['id'] in issued_vehicle_ids]
-    # Anonymous guest traffic uses plate strings only, with no Vehicle/User rows.
-    guest_vehicles = [
-        dict(id=f'G{typ[0]}-{i}', plate_no=f'DEMO-G{typ[0]}-{i:04d}',
-             vehicle_type=typ, user_ref=None)
-        for typ, n in (('CAR', 600), ('MOTORCYCLE', 1100))
-        for i in range(1, n + 1)
-    ]
-    user_type = {u['id']: u['identity_type'] for u in users}
-    permits_by_vehicle = {}
-    for p in permits:
-        permits_by_vehicle.setdefault(p['vehicle_ref'], []).append(p)
+    users, areas = _make_users(rng), _make_areas()
+    vehicles = _make_vehicles(rng, users)
+    permits = _make_permits(rng, vehicles, users)
+    profiles = _user_profiles(rng, vehicles, users)
+    paid = {p['vehicle_ref']: p for p in permits if p['paid_at'] is not None}
+    guest_vehicles = []
+    for typ, size in (('CAR', 2400), ('MOTORCYCLE', 3400)):
+        for n in range(1, size + 1):
+            guest_vehicles.append(dict(id=f'G{typ[0]}-{n}',
+                                       plate_no=f'DEMO-G{typ[0]}-{n:05d}',
+                                       vehicle_type=typ, user_ref=None,
+                                       regular_guest=n <= round(size * 0.12)))
+    pools = {}
+    for typ in ('CAR', 'MOTORCYCLE'):
+        pools[(typ, False)] = [v for v in vehicles if v['vehicle_type'] == typ and v['id'] in paid]
+        pools[(typ, True)] = [v for v in guest_vehicles if v['vehicle_type'] == typ]
 
-    def permit_at(v, enter, leave):
-        entry_d = enter.astimezone(TAIPEI).date()
-        final_d = (leave or enter).astimezone(TAIPEI).date()
-        for p in permits_by_vehicle.get(v['id'], ()):
-            if (p['paid_at'] and p['paid_at'] <= enter and
-                    p['valid_from'] <= entry_d and final_d <= p['valid_to']):
-                return p['id']
-        return None
-
-    pools = {t: [v for v in vehicles if v['vehicle_type'] == t]
-             for t in ('CAR', 'MOTORCYCLE')}
-    guest_pools = {t: [v for v in guest_vehicles if v['vehicle_type'] == t]
-                   for t in ('CAR', 'MOTORCYCLE')}
-    # A consistent habitual choice for each driver, selected lazily per
-    # (vehicle, permit/visitor) category, never overruling access eligibility.
-    preferred_areas = {}
-    last_exit = {}
+    areas_by_kind = {}
+    for typ in ('CAR', 'MOTORCYCLE'):
+        for visitor in (False, True):
+            areas_by_kind[(typ, visitor)] = [a for a in areas if a['vehicle_type'] == typ
+                                               and a['visitor'] == visitor]
     area_exits = {a['id']: [] for a in areas}
+    last_vehicle_exit = {}
+    last_user_exit = {}
+    favorite = {}
     records = []
+    daily_targets = _daily_counts(count, snapshot.astimezone(TAIPEI))
 
-    def permitted_areas(v, permit_id):
-        if permit_id is None:
-            if v['vehicle_type'] == 'CAR':
-                return [a for a in areas if a['vehicle_type'] == 'CAR' and a['visitor']]
-            return [a for a in areas if a['vehicle_type'] == 'MOTORCYCLE' and a['visitor']]
-        if v['vehicle_type'] == 'MOTORCYCLE':
-            return [a for a in areas if a['vehicle_type'] == 'MOTORCYCLE' and not a['visitor']]
-        owner = user_type[v['user_ref']]
-        if owner == 'STUDENT':
-            return [a for a in areas if a['vehicle_type'] == 'CAR' and
-                    a['map_no'] in CAR_STUDENT_PERMIT_NUMBERS]
-        return [a for a in areas if a['vehicle_type'] == 'CAR' and not a['visitor']]
-
-    def pick_vehicle(typ, enter, want_permit):
-        pool = pools[typ] if want_permit else guest_pools[typ]
-        for _ in range(100):
-            v = rng.choice(pool)
-            if ((permit_at(v, enter, None) is not None) == want_permit and
-                    last_exit.get(v['id'], datetime.min.replace(tzinfo=timezone.utc)) <= enter):
-                return v
-        choices = [v for v in pool if
-                   (permit_at(v, enter, None) is not None) == want_permit and
-                   last_exit.get(v['id'], datetime.min.replace(tzinfo=timezone.utc)) <= enter]
-        if not choices:
-            raise RuntimeError(f'No eligible available {typ} vehicle for {enter}')
-        return rng.choice(choices)
-
-    def pick_area(v, permit_id, enter):
-        possible = permitted_areas(v, permit_id)
-        for a in possible:
-            heap = area_exits[a['id']]
-            while heap and heap[0] <= enter:
-                heapq.heappop(heap)
-        free = [a for a in possible if len(area_exits[a['id']]) < a['capacity']]
-        if not free:
-            raise RuntimeError(f'All eligible areas are occupied at {enter}')
-        key = (v['id'], permit_id is not None)
-        fav = preferred_areas.get(key)
-        if fav is None:
-            fav = rng.choices(possible, weights=[a['capacity'] ** 0.55 *
-                                a['popularity'] for a in possible], k=1)[0]['id']
-            preferred_areas[key] = fav
-        if rng.random() < 0.77:
-            for a in free:
-                if a['id'] == fav:
-                    return a
-        return rng.choices(free, weights=[a['capacity'] ** 0.55 *
-                           a['popularity'] for a in free], k=1)[0]
-
-    days = [START_DATE + timedelta(days=k) for k in range((END_DATE - START_DATE).days + 1)]
-    daily = rng.choices(days, weights=[_day_weight(d) for d in days], k=count - active_count)
+    # Build candidates day-by-day; then process in global chronological order.
+    # Each vehicle is sampled at most once per day; multi-day dorm stays are
+    # excluded again while actual arrivals are processed.
     proposed = []
-    for d in daily:
-        weekend = d.weekday() >= 5 or d in FALL_HOLIDAYS
-        # Visitor share rises on weekends; campus-member commuting shrinks in summer.
-        visitor_chance = (0.59 if weekend else 0.24)
-        if d.month in (7, 8):
-            visitor_chance += 0.12
-        visitor = rng.random() < visitor_chance
-        typ = rng.choices(('CAR', 'MOTORCYCLE'), weights=(30, 70), k=1)[0]
-        hour = _choose_hour(rng, weekend, visitor)
-        entered = _as_utc(datetime.combine(d, time(hour, rng.randrange(60)), tzinfo=TAIPEI))
-        proposed.append((entered, typ, not visitor, weekend))
-    proposed.sort(key=lambda item: item[0])
+    day_backups = {}
+    for day in sorted(daily_targets):
+        n = daily_targets[day]
+        phase = _phase(day)
+        weekend = day.weekday() >= 5 or day in HOLIDAYS
+        grouped = defaultdict(int)
+        for _ in range(n):
+            v_rate = (0.59 if weekend else (0.13 if phase == 'classes' else
+                      0.15 if phase == 'exams' else 0.27))
+            visitor = rng.random() < v_rate
+            car_rate = 0.60 if visitor else (0.45 if phase.startswith('summer') else 0.34)
+            typ = 'CAR' if rng.random() < car_rate else 'MOTORCYCLE'
+            grouped[(typ, visitor)] += 1
+        for (typ, visitor), slots in sorted(grouped.items()):
+            pool = pools[(typ, visitor)]
+            if slots > len(pool):
+                raise ValueError('daily demand exceeds the eligible driver pool; lower --records')
+            order = _candidate_order(rng, pool, profiles, day, phase, visitor)
+            key = (day, typ, visitor)
+            day_backups[key] = iter(order[slots:])
+            for vehicle in order[:slots]:
+                entry = _arrival(rng, day, visitor, profiles.get(vehicle['id']), snapshot)
+                proposed.append((entry, rng.random(), day, typ, visitor, vehicle))
+    proposed.sort(key=lambda t: (t[0], t[1]))
 
-    for entered, typ, want_permit, weekend in proposed:
-        v = pick_vehicle(typ, entered, want_permit)
-        owner_type = user_type.get(v['user_ref'])
-        mins = _stay_minutes(rng, typ, not want_permit, owner_type, weekend)
-        left = entered + timedelta(minutes=mins)
-        permit_id = permit_at(v, entered, left)
-        # If a permit holder enters late on 10/31 and leaves on 11/01,
-        # shorten this synthetic visit before the permit expires.
-        if want_permit and permit_id is None:
-            permit_on_entry = permit_at(v, entered, None)
-            if permit_on_entry is None:
-                raise RuntimeError('Cannot find paid permit on entry')
-            current = next(p for p in permits_by_vehicle[v['id']]
-                           if p['id'] == permit_on_entry)
-            expiry = _as_utc(datetime.combine(current['valid_to'] + timedelta(days=1),
-                                               time.min, tzinfo=TAIPEI))
-            left = min(left, expiry - timedelta(seconds=1))
-            if left <= entered:
-                raise RuntimeError('No time available before permit expiration')
-            permit_id = permit_at(v, entered, left)
-            if permit_id is None:
-                raise RuntimeError('Cannot find a permit covering whole stay')
-        area = pick_area(v, permit_id, entered)
-        fee = _price(entered, left, area['hourly_rate'], permit_id)
-        paid = fee > 0 and rng.random() < 0.96
-        records.append(dict(id=len(records) + 1, plate_no=v['plate_no'],
-                            area_ref=area['id'], permit_ref=permit_id,
-                            entry_time=entered, exit_time=left, parking_fee=fee,
-                            payment_method=rng.choices(('CARD', 'CASH', 'TRANSFER'),
-                                                       weights=(48, 42, 10), k=1)[0] if paid else None,
-                            paid_at=left + timedelta(minutes=rng.randint(2, 15)) if paid else None))
-        last_exit[v['id']] = left
-        heapq.heappush(area_exits[area['id']], left)
+    for entry, _, day, typ, visitor, candidate in proposed:
+        backup = day_backups[(day, typ, visitor)]
+        vehicle = candidate
+        while (last_vehicle_exit.get(vehicle['plate_no'], datetime.min.replace(tzinfo=timezone.utc)) > entry or
+               (vehicle['user_ref'] is not None and
+                last_user_exit.get(vehicle['user_ref'], datetime.min.replace(tzinfo=timezone.utc)) > entry)):
+            try:
+                vehicle = next(backup)
+            except StopIteration as exc:
+                raise RuntimeError(f'No available {typ} driver on {day}; reduce the record count') from exc
+        permit = None if visitor else paid[vehicle['id']]
+        profile = profiles.get(vehicle['id'])
+        duration = _stay_minutes(rng, typ, visitor, profile, day, _phase(day))
+        actual_exit = entry + timedelta(minutes=duration)
+        # Permit is valid for the entire trip; a 114-school-year stay will not
+        # cross its October expiry in this June scenario.
+        if permit is not None:
+            assert permit['paid_at'] <= entry and permit['valid_from'] <= day <= permit['valid_to']
+        if visitor:
+            options = areas_by_kind[(typ, True)]
+        elif typ == 'CAR' and profile['identity'] == 'STUDENT':
+            options = [a for a in areas if a['vehicle_type'] == 'CAR'
+                       and a['map_no'] in CAR_STUDENT_PERMIT_NUMBERS]
+        else:
+            options = areas_by_kind[(typ, False)]
 
-    # An independent current snapshot (still capacity & access constrained).
-    # Scale was explicitly chosen for a teaching dashboard; it is NOT a census.
-    n_car = round(active_count * 0.30)
-    types = ['CAR'] * n_car + ['MOTORCYCLE'] * (active_count - n_car)
-    rng.shuffle(types)
-    for typ in types:
-        # At 18:00 commuter stays remain, and visitor lots stay active.
-        want_permit = rng.random() < (0.58 if typ == 'CAR' else 0.68)
-        entered = now - timedelta(minutes=rng.randint(25, 560))
-        v = pick_vehicle(typ, entered, want_permit)
-        permit_id = permit_at(v, entered, None)
-        area = pick_area(v, permit_id, entered)
-        records.append(dict(id=len(records) + 1, plate_no=v['plate_no'],
-                            area_ref=area['id'], permit_ref=permit_id,
-                            entry_time=entered, exit_time=None, parking_fee=None,
-                            payment_method=None, paid_at=None))
-        # Active stay has no exit; use far future to block any subsequent picks.
-        last_exit[v['id']] = datetime.max.replace(tzinfo=timezone.utc)
-        heapq.heappush(area_exits[area['id']], datetime.max.replace(tzinfo=timezone.utc))
+        for area in options:
+            heap = area_exits[area['id']]
+            while heap and heap[0] <= entry:
+                heapq.heappop(heap)
+        available = [a for a in options if len(area_exits[a['id']]) < a['capacity']]
+        if not available:
+            raise RuntimeError(f'All eligible {typ} lots are full at {entry}; reduce peak demand')
+        key = vehicle['plate_no']
+        if key not in favorite:
+            zone = _dept_zone(profile['department']) if profile else 'administration'
+            fav_zone = ZONE_AREAS[typ][zone] if not visitor else ()
+            candidates = [a for a in options if a['map_no'] in fav_zone] or options
+            if visitor and typ == 'CAR':
+                candidates = [a for a in options if a['map_no'] in (1, 3)] or options
+            favorite[key] = rng.choices(candidates,
+                                        weights=[a['capacity'] ** 0.5 * a['popularity'] for a in candidates],
+                                        k=1)[0]['id']
+        preferred = next((a for a in available if a['id'] == favorite[key]), None)
+        if preferred is not None and rng.random() < 0.83:
+            area = preferred
+        else:
+            area = rng.choices(available, weights=[a['capacity'] ** 0.55 * a['popularity']
+                                                    for a in available], k=1)[0]
+        still_open = actual_exit > snapshot
+        fee = None if still_open else _price(entry, actual_exit, area['hourly_rate'],
+                                              None if permit is None else permit['id'])
+        payment_method, paid_at = None, None
+        if fee is not None and fee > 0:
+            paid_at = actual_exit - timedelta(minutes=min(duration - 1, rng.randint(3, 12)))
+            payment_method = rng.choices(('CARD', 'CASH', 'TRANSFER'),
+                                         weights=(52, 37, 11), k=1)[0]
+        records.append(dict(id=len(records) + 1, plate_no=vehicle['plate_no'],
+                            area_ref=area['id'], permit_ref=None if permit is None else permit['id'],
+                            entry_time=entry, exit_time=None if still_open else actual_exit,
+                            parking_fee=fee, payment_method=payment_method, paid_at=paid_at))
+        last_vehicle_exit[key] = actual_exit
+        if vehicle['user_ref'] is not None:
+            last_user_exit[vehicle['user_ref']] = actual_exit
+        heapq.heappush(area_exits[area['id']], actual_exit)
 
-    assert len(records) == count
+    if len(records) != count:
+        raise AssertionError('the requested record count was not generated')
     return dict(campus_user=users, vehicle=vehicles, parking_area=areas,
                 parking_permit=permits, parking_record=records)
 
 
-def summarize_dataset(rows):
-    records = rows['parking_record']
-    areas = rows['parking_area']
-    area_type = {a['id']: a['vehicle_type'] for a in areas}
+def summarize_dataset(rows, as_of=DEFAULT_AS_OF):
+    records, areas = rows['parking_record'], rows['parking_area']
+    by_area = {a['id']: a['vehicle_type'] for a in areas}
     months = Counter(r['entry_time'].astimezone(TAIPEI).strftime('%Y-%m') for r in records)
-    by_type = Counter(area_type[r['area_ref']] for r in records)
-    by_hour = Counter(r['entry_time'].astimezone(TAIPEI).hour for r in records)
+    dates = Counter(r['entry_time'].astimezone(TAIPEI).strftime('%Y-%m-%d') for r in records)
+    weeks = Counter(_phase(r['entry_time'].astimezone(TAIPEI).date()) for r in records)
+    vehicle_types = Counter(by_area[r['area_ref']] for r in records)
+    hours = Counter(r['entry_time'].astimezone(TAIPEI).hour for r in records)
+    identities = Counter(u['identity_type'] for u in rows['campus_user'])
     return dict(
-        campus_users=len(rows['campus_user']), vehicles=len(rows['vehicle']),
-        permits=len(rows['parking_permit']), areas=len(areas),
-        area_car=sum(a['vehicle_type'] == 'CAR' for a in areas),
+        scenario='NSYSU-style 114 school year: classes / exams / summer (fictional)',
+        start_date=START_DATE.isoformat(), end_date=END_DATE.isoformat(),
+        as_of=as_of.isoformat(),
+        campus_users=len(rows['campus_user']), by_identity=dict(identities),
+        vehicles=len(rows['vehicle']),
+        permits=len(rows['parking_permit']),
+        permits_by_vehicle_type={typ: sum(v['vehicle_type'] == typ for v in rows['vehicle'])
+                                 for typ in ('CAR', 'MOTORCYCLE')},
+        areas=len(areas), area_car=sum(a['vehicle_type'] == 'CAR' for a in areas),
         area_motorcycle=sum(a['vehicle_type'] == 'MOTORCYCLE' for a in areas),
         capacity_car=sum(a['capacity'] for a in areas if a['vehicle_type'] == 'CAR'),
         capacity_motorcycle=sum(a['capacity'] for a in areas if a['vehicle_type'] == 'MOTORCYCLE'),
         records=len(records), closed_records=sum(r['exit_time'] is not None for r in records),
         active_records=sum(r['exit_time'] is None for r in records),
-        by_month=dict(sorted(months.items())),
-        by_vehicle_type=dict(sorted(by_type.items())),
-        peak_hours=by_hour.most_common(5),
+        by_month=dict(sorted(months.items())), by_date=dict(sorted(dates.items())),
+        by_phase=dict(sorted(weeks.items())), by_vehicle_type=dict(sorted(vehicle_types.items())),
+        peak_hours=hours.most_common(5),
         visitor_records=sum(r['permit_ref'] is None for r in records),
         permit_records=sum(r['permit_ref'] is not None for r in records),
         paid_visitor_records=sum(r['paid_at'] is not None for r in records),
         free_motorcycle_visits=sum(r['parking_fee'] == 0 and r['permit_ref'] is None
-                                   and area_type[r['area_ref']] == 'MOTORCYCLE'
-                                   for r in records),
+                                   and by_area[r['area_ref']] == 'MOTORCYCLE' for r in records),
     )

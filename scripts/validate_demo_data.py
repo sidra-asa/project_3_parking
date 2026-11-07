@@ -1,111 +1,149 @@
-"""Offline integrity verification for fictional demo data, no database needed."""
+"""Offline integrity and plausibility checks; does not access PostgreSQL."""
 from __future__ import annotations
-from collections import defaultdict
-from datetime import datetime
+
+from collections import Counter, defaultdict
+from datetime import datetime, timezone
 import heapq
 from pathlib import Path
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from demo_data_generator import build_demo_data, TAIPEI  # noqa: E402
+from demo_data_generator import (  # noqa: E402
+    build_demo_data, DEFAULT_AS_OF, END_DATE, HOLIDAYS, PERMIT_COUNTS,
+    START_DATE, TAIPEI, USER_COUNTS, _phase,
+)
 from campus_parking_areas import (  # noqa: E402
     CAR_AREAS, MOTORCYCLE_AREAS, CAR_VISITOR_NUMBERS,
     MOTORCYCLE_VISITOR_NUMBERS, CAR_STUDENT_PERMIT_NUMBERS,
 )
 
 
-def validate(rows):
+def validate(rows, expected_records=30000, as_of=DEFAULT_AS_OF):
+    as_of = as_of.astimezone(timezone.utc)
     users = {u['id']: u for u in rows['campus_user']}
     vehicles = {v['id']: v for v in rows['vehicle']}
     vehicles_by_plate = {v['plate_no']: v for v in vehicles.values()}
     areas = {a['id']: a for a in rows['parking_area']}
     permits = {p['id']: p for p in rows['parking_permit']}
-    expected = {(typ, no): (name, cap) for typ, table in
-                (('CAR', CAR_AREAS), ('MOTORCYCLE', MOTORCYCLE_AREAS))
-                for no, name, cap in table}
-    assert len(users) == 1500
-    assert len(vehicles) == 900
-    assert len(areas) == 49
-    assert len(permits) == 1200
-    assert len(rows['parking_record']) == 30000
-    assert len({v['plate_no'] for v in vehicles.values()}) == 900
+    expected_area = {(typ, no): (name, cap) for typ, table in
+                     (('CAR', CAR_AREAS), ('MOTORCYCLE', MOTORCYCLE_AREAS))
+                     for no, name, cap in table}
+    expected_users = sum(USER_COUNTS.values())
+    expected_vehicles = sum(PERMIT_COUNTS.values())
+
+    assert len(users) == expected_users
+    assert Counter(u['identity_type'] for u in users.values()) == USER_COUNTS
+    assert len(vehicles) == expected_vehicles
+    assert len({v['plate_no'] for v in vehicles.values()}) == expected_vehicles
+    assert sum(v['vehicle_type'] == 'CAR' for v in vehicles.values()) == PERMIT_COUNTS['CAR']
+    assert sum(v['vehicle_type'] == 'MOTORCYCLE' for v in vehicles.values()) == PERMIT_COUNTS['MOTORCYCLE']
     assert all(v['user_ref'] in users for v in vehicles.values())
-    assert {v['id'] for v in vehicles.values()} == {p['vehicle_ref'] for p in permits.values()}
-    assert len({(p['vehicle_ref'], p['academic_year']) for p in permits.values()}) == 1200
+    assert max(Counter(v['user_ref'] for v in vehicles.values()).values()) <= 3
+    assert len(permits) == expected_vehicles
+    assert all(p['academic_year'] == '114' for p in permits.values())
+    assert len({(p['vehicle_ref'], p['academic_year']) for p in permits.values()}) == len(permits)
+    assert {p['vehicle_ref'] for p in permits.values()} == set(vehicles)
+    assert len(areas) == 49
     assert sum(a['capacity'] for a in areas.values() if a['vehicle_type'] == 'CAR') == 870
     assert sum(a['capacity'] for a in areas.values() if a['vehicle_type'] == 'MOTORCYCLE') == 6306
-    assert all((a['area_name'], a['capacity']) ==
-               expected[(a['vehicle_type'], a['map_no'])] for a in areas.values())
+    assert all((a['area_name'], a['capacity']) == expected_area[(a['vehicle_type'], a['map_no'])]
+               for a in areas.values())
+    assert len(rows['parking_record']) == expected_records
 
-    events = sorted(rows['parking_record'], key=lambda r: r['entry_time'])
-    last_exit = {}
+    records = sorted(rows['parking_record'], key=lambda r: r['entry_time'])
+    open_plates = set()
+    last_by_plate, last_by_user = {}, {}
     occupancy = defaultdict(list)
-    active_set = set()
-    for rec in events:
-        plate = rec['plate_no']
-        v = vehicles_by_plate.get(plate)
-        a = areas[rec['area_ref']]
-        if v is not None:
-            assert a['vehicle_type'] == v['vehicle_type'], rec['id']
+    phase_counts = Counter()
+    by_date = Counter()
+    for r in records:
+        plate = r['plate_no']
+        vehicle = vehicles_by_plate.get(plate)
+        area = areas[r['area_ref']]
+        start = r['entry_time']
+        assert start.tzinfo is not None and start <= as_of
+        local_day = start.astimezone(TAIPEI).date()
+        assert START_DATE <= local_day <= END_DATE, (r['id'], local_day)
+        assert r['id'] > 0
+        assert last_by_plate.get(plate, datetime.min.replace(tzinfo=timezone.utc)) <= start, (
+            'overlapping same vehicle', r['id'], plate)
+        if vehicle is not None:
+            assert area['vehicle_type'] == vehicle['vehicle_type']
+            uid = vehicle['user_ref']
+            assert last_by_user.get(uid, datetime.min.replace(tzinfo=timezone.utc)) <= start, (
+                'user simultaneously driving multiple vehicles', r['id'], uid)
         else:
-            assert plate.startswith('DEMO-GC-') if a['vehicle_type'] == 'CAR' else plate.startswith('DEMO-GM-')
-        if rec['permit_ref'] is None:
-            assert v is None, ('guest must not have a Vehicle row', rec['id'])
-            assert a['map_no'] in (CAR_VISITOR_NUMBERS if a['vehicle_type'] == 'CAR'
-                                   else MOTORCYCLE_VISITOR_NUMBERS), rec['id']
-        elif a['vehicle_type'] == 'CAR':
-            owner_type = users[v['user_ref']]['identity_type']
-            if owner_type == 'STUDENT':
-                assert a['map_no'] in CAR_STUDENT_PERMIT_NUMBERS, rec['id']
-            else:
-                assert not a['visitor'], rec['id']
+            assert plate.startswith('DEMO-GC-' if area['vehicle_type'] == 'CAR' else 'DEMO-GM-')
+
+        if r['permit_ref'] is None:
+            assert vehicle is None, ('non-guest without permit', r['id'])
+            assert area['map_no'] in (CAR_VISITOR_NUMBERS if area['vehicle_type'] == 'CAR'
+                                     else MOTORCYCLE_VISITOR_NUMBERS)
         else:
-            assert not a['visitor'], rec['id']
-        assert rec['entry_time'].tzinfo is not None
-        assert rec['id'] > 0
-        last = last_exit.get(plate)
-        assert last is None or last <= rec['entry_time'], (plate, rec['id'], 'vehicle overlap')
-        h = occupancy[a['id']]
-        while h and h[0] <= rec['entry_time']:
-            heapq.heappop(h)
-        assert len(h) < a['capacity'], (a['id'], rec['id'], 'area full')
-        if rec['exit_time'] is not None:
-            assert rec['exit_time'] > rec['entry_time']
-            assert rec['parking_fee'] is not None
-            assert rec['parking_fee'] >= 0
-            until = rec['exit_time']
-            if rec['permit_ref']:
-                permit = permits[rec['permit_ref']]
-                assert permit['vehicle_ref'] == v['id']
-                assert permit['paid_at'] is not None
-                assert permit['paid_at'] <= rec['entry_time']
-                assert permit['valid_from'] <= rec['entry_time'].astimezone(TAIPEI).date()
-                assert rec['exit_time'].astimezone(TAIPEI).date() <= permit['valid_to']
-                assert rec['parking_fee'] == 0
+            assert vehicle is not None
+            p = permits[r['permit_ref']]
+            assert p['vehicle_ref'] == vehicle['id'] and p['paid_at'] is not None
+            assert p['paid_at'] <= start
+            assert p['valid_from'] <= local_day <= p['valid_to']
+            if area['vehicle_type'] == 'CAR':
+                if users[vehicle['user_ref']]['identity_type'] == 'STUDENT':
+                    assert area['map_no'] in CAR_STUDENT_PERMIT_NUMBERS
+                else:
+                    assert not area['visitor']
             else:
-                assert rec['parking_fee'] > 0 or (a['vehicle_type'] == 'MOTORCYCLE'
-                                                        and a['visitor'])
-            if rec['paid_at'] is None:
-                assert rec['payment_method'] is None
-            else:
-                assert rec['parking_fee'] > 0 or (a['vehicle_type'] == 'MOTORCYCLE'
-                                                        and a['visitor'])
-                assert rec['payment_method'] is not None
-                assert rec['paid_at'] >= rec['exit_time']
+                assert not area['visitor']
+
+        heap = occupancy[area['id']]
+        while heap and heap[0] <= start:
+            heapq.heappop(heap)
+        assert len(heap) < area['capacity'], ('capacity exceeded', area['id'], r['id'])
+
+        if r['exit_time'] is None:
+            assert r['parking_fee'] is None
+            assert r['payment_method'] is None and r['paid_at'] is None
+            assert plate not in open_plates
+            open_plates.add(plate)
+            until = datetime.max.replace(tzinfo=timezone.utc)
         else:
-            assert rec['parking_fee'] is None
-            assert rec['payment_method'] is None and rec['paid_at'] is None
-            assert plate not in active_set
-            active_set.add(plate)
-            until = datetime.max.replace(tzinfo=rec['entry_time'].tzinfo)
-        heapq.heappush(h, until)
-        last_exit[plate] = until
-    assert len(active_set) == 450
+            until = r['exit_time']
+            assert start < until <= as_of, ('completed record ends after snapshot', r['id'])
+            assert r['parking_fee'] is not None and r['parking_fee'] >= 0
+            if r['permit_ref'] is not None:
+                assert r['parking_fee'] == 0
+                assert until.astimezone(TAIPEI).date() <= permits[r['permit_ref']]['valid_to']
+                assert r['paid_at'] is None and r['payment_method'] is None
+            elif area['vehicle_type'] == 'MOTORCYCLE':
+                assert r['parking_fee'] == 0
+                assert r['payment_method'] is None and r['paid_at'] is None
+            else:
+                assert r['parking_fee'] > 0
+                assert r['payment_method'] is not None
+                assert start <= r['paid_at'] <= until, ('payment after exit', r['id'])
+        heapq.heappush(heap, until)
+        last_by_plate[plate] = until
+        if vehicle is not None:
+            last_by_user[vehicle['user_ref']] = until
+        phase_counts[_phase(local_day)] += 1
+        by_date[local_day] += 1
+
+    assert len(open_plates) > 0, 'snapshot has no parked cars'
+    # These relative trends are the intended simulation, not measured counts.
+    if expected_records == 30000:
+        assert phase_counts == {'classes': 9900, 'exams': 8900,
+                                'summer_week_1': 5200, 'summer_week_2': 6000}
+        assert by_date[START_DATE] > by_date[START_DATE.replace(day=7)]
+        assert by_date[END_DATE.replace(day=19)] < by_date[END_DATE.replace(day=18)]
     return True
 
 
+def main():
+    rows = build_demo_data()
+    validate(rows)
+    print(f'PASS: {len(rows["campus_user"]):,} users, {len(rows["vehicle"]):,} vehicles, '
+          f'{len(rows["parking_permit"]):,} permits, {len(rows["parking_record"]):,} records; '
+          f'{sum(r["exit_time"] is None for r in rows["parking_record"]):,} open at snapshot')
+
+
 if __name__ == '__main__':
-    data = build_demo_data(as_of=datetime.fromisoformat('2026-11-03T18:00:00+08:00'))
-    validate(data)
-    print('PASS: 30,000 rows, time non-overlap, area capacity, permits and payments')
+    main()

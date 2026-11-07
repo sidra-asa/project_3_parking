@@ -1,7 +1,7 @@
 {% extends 'base.html' %}
 {% block content %}
 <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-4">
- <div><div class="eyebrow">DATA MANAGEMENT</div><h1 class="h2 fw-bold mb-1">{{ title }}</h1><p class="text-secondary">{% if resource == 'vehicles' %}僅顯示曾辦理學年度停車證的校內車輛；臨停車輛不建立車主資料。{% elif resource == 'parking-records' %}每筆停車只保留車牌、區域與進出場資訊。{% else %}透過 Flask REST API 管理 PostgreSQL 資料。{% endif %}</p></div>
+ <div><div class="eyebrow">DATA MANAGEMENT</div><h1 class="h2 fw-bold mb-1">{{ title }}</h1><p class="text-secondary">{% if resource == 'vehicles' %}僅顯示曾辦理學年度停車證的校內車輛；臨停車輛不建立車主資料。停車證「狀態」依網站執行當日判斷，114 學年度的歷史模擬證件可能顯示已過期。{% elif resource == 'parking-records' %}每筆停車只保留車牌、區域與進出場資訊。{% else %}透過 Flask REST API 管理 PostgreSQL 資料。{% endif %}</p></div>
  {% if current_user.role == 'ADMIN' %}<button class="btn btn-primary" id="newBtn">＋ 新增資料</button>{% endif %}
 </div>
 <div class="card border-0 shadow-sm"><div class="card-body">

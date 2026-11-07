@@ -41,3 +41,23 @@ def manage(resource):
     if resource not in RESOURCES:
         abort(404)
     return render_template('resource.html', resource=resource, title=RESOURCES[resource])
+
+
+@bp.get('/analysis/extended')
+@login_required
+def advanced_analytics():
+    return render_template('advanced_analytics.html', title='延伸資料分析')
+
+
+@bp.get('/people/<int:user_id>')
+@login_required
+def user_profile(user_id):
+    return render_template('user_profile.html', title='車主綜合查詢', user_id=user_id)
+
+
+@bp.get('/management/review')
+@login_required
+def management_review():
+    if current_user.role != 'ADMIN':
+        abort(403)
+    return render_template('management_review.html', title='待處理清單')

@@ -17,6 +17,8 @@
     <div class="collapse navbar-collapse" id="mainNavigation">
       <ul class="navbar-nav me-auto mb-2 mb-lg-0">
         <li class="nav-item"><a class="nav-link {{ 'active' if request.path == '/dashboard' else '' }}" href="{{ url_for('web.dashboard') }}">分析儀表板</a></li>
+        <li class="nav-item"><a class="nav-link {{ 'active' if request.path == '/analysis/extended' else '' }}" href="{{ url_for('web.advanced_analytics') }}">延伸分析</a></li>
+        {% if current_user.role == 'ADMIN' %}<li class="nav-item"><a class="nav-link {{ 'active' if request.path == '/management/review' else '' }}" href="{{ url_for('web.management_review') }}">待處理清單</a></li>{% endif %}
         <li class="nav-item dropdown"><a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">資料管理</a>
           <ul class="dropdown-menu">
             <li><a class="dropdown-item" href="/manage/campus-users">校內使用者</a></li>

@@ -19,3 +19,6 @@ body { background:#f5f7fa; color:var(--ink); font-family:system-ui,-apple-system
 .occ-title { font-size:.89rem; font-weight:600; }
 .occ-bar { height:10px; border-radius:10px; }
 @media (max-width:575px) { .metric-value { font-size:1.6rem; } .chart-box { height:240px; } }
+.chart-box-wide { height:320px; }
+.info-value { font-size:1.3rem; font-weight:700; }
+@media (max-width: 575px) { .chart-box-wide { height:270px; } }

@@ -22,7 +22,17 @@ def select_active_permit(plate_no, entered_at):
 def validate_permit(permit, plate_no, entry_dt, exit_dt=None):
     if permit.vehicle.plate_no != plate_no:
         raise APIError('停車證與車牌不相符', 409, 'CONFLICT')
-    if not permit.paid_at or permit.paid_at > entry_dt:
+    # SQLite returns naive datetimes even for DateTime(timezone=True).
+    # The application always stores timestamps in UTC, so restore UTC before
+    # Python-side comparison. PostgreSQL already returns aware datetimes.
+    paid_at = permit.paid_at
+    if paid_at is None:
+        raise APIError('停車證於進場時尚未付款', 409, 'CONFLICT')
+    if paid_at.tzinfo is None:
+        paid_at = paid_at.replace(tzinfo=timezone.utc)
+    if entry_dt.tzinfo is None:
+        entry_dt = entry_dt.replace(tzinfo=timezone.utc)
+    if paid_at > entry_dt:
         raise APIError('停車證於進場時尚未付款', 409, 'CONFLICT')
     first_day = local_date(entry_dt)
     last_day = local_date(exit_dt) if exit_dt else first_day
