@@ -1,179 +1,217 @@
-# project_3_parking
+# 校園車輛與停車管理系統
 
-> **校園車輛與停車管理系統** — 資料庫課程專題
+這是資料庫課程的實作專題，以校園停車管理為情境，整合車輛登記、學年度停車證、停車進出紀錄及費用處理。除了基本資料的新增、查詢、修改與刪除，也透過跨資料表查詢與統計，觀察不同時段、車種和身分別的停車使用情形。
 
-前端以 Bootstrap + Jinja2 呈現，透過 `fetch()` 呼叫 Flask 的 JSON API，所有業務資料存取集中在 SQLAlchemy / Service Layer。
+專案使用 Flask 開發後端、PostgreSQL 儲存資料，前端以 Bootstrap 與 Jinja2 製作頁面，並透過 JavaScript 呼叫 REST API。
 
-## 功能
+## Miniworld（模擬情境）
 
-- 五個停車業務實體：CampusUser、Vehicle、ParkingPermit、ParkingArea、ParkingRecord
-- 獨立 LoginAccount 表：Flask-Login Session 認證，Admin / Viewer 角色
-- JSON REST API (`/api/v1`)：CRUD、車輛進場／離場、停車證付款、停車費結算
-- 分析 Dashboard：停車區域、進場時段、停留時間、即時容量、停車證、已付款臨停收入
+本專題以國立中山大學的校園停車管理為背景，建立一個簡化的停車管理情境（Miniworld）。資料庫主要記錄「誰擁有車輛、車輛是否有停車證、停在哪個區域，以及每次進出場的情形」，讓這些資料可以互相關聯，並進一步用於查詢與統計。
 
-## Miniworld 範圍
+### 情境範圍
 
-1. 僅考慮汽車、機車，未考慮重機、大型車輛。
-2. **車輛管理只包含曾辦理學年度停車證的校內車輛**，並須關聯一位 CampusUser；辦理首次停車證時會同步建立 Vehicle。來賓臨停不建立 Vehicle 或車主資料。
-3. 一個停車區域僅供一種車型，如海堤汽車停車區、海堤機車停車區。
-4. 校內使用者可登記多台車；未登記車主的車輛可臨停，不考慮現實世界可能有車輛轉讓的狀況。
-5. 停車證**僅包含學年度證**：同一車輛同一學年最多一張。付費且於停車期間有效時，不另收單次停車費。
-6. 無有效且已付款停車證的車輛，離場依所在區域 `hourly_rate × 向上取整停車小時數` 計費。
-7. 車輛進場時，後端會自動選用當日有效且已付款的學年度證。
-8. 停車紀錄對應一車、一區域；一車不能同時有兩筆未離場紀錄。
-9. 不考慮臨時停車證、分期付款、退款、跨區停車、夜間／假日費率、特殊車位。
-10. 登入帳號與 CampusUser **互不關聯**；前者是網站操作身分，後者是業務資料。
+- **校內使用者與車輛**：校內使用者可以登記多台汽車或機車，每台已登記車輛都會對應一位車主。
+- **學年度停車證**：已登記車輛可以申請學年度停車證，系統記錄其所屬學年度、有效期間與付款狀態。
+- **停車區域**：校園有多個停車區，每個區域設定可停放的車種、容量與臨時停車費率。
+- **進出場紀錄**：車輛進場時記錄車牌、停車區域與時間；離場時補上離場時間，並依停車證狀態及停車時間判斷是否需要收費。未登記的訪客車輛也可以臨時停車，因此不要求每筆停車紀錄都有對應的車輛登記資料。
+- **管理與分析**：管理員負責維護資料及處理停車進出；檢視者可以查詢資料。系統也能從停車紀錄統計各時段的車流、停留時間、停車區使用情形及費用收入。
 
+舉例來說，一位校內使用者可以登記自己的汽車並申請學年度停車證。當車輛進出停車區時，系統會留下停車紀錄；若當次停車符合有效且已付款的停車證條件，就不收取臨停費用。沒有停車證的車輛則按照停車區費率計費。這些紀錄也可用來分析不同停車區或時段的使用差異。
 
-## 1. 本機安裝 (Python 3.12 建議)
+### 簡化假設
+
+為了將重點放在資料表關聯、資料庫操作與分析功能，Miniworld 不會完整模擬真實停車場的所有作業：
+
+- 只考慮**汽車**與**機車**，且一個停車區只提供單一車種使用。
+- 同一車輛在同一學年度最多有一張停車證；停車證必須已付款且在有效期間內，才可用於免收當次停車費。
+- 未使用有效停車證的車輛，依停車區的每小時費率及停車時間計費，不足一小時以一小時計。
+- 同一車牌同一時間只能有一筆尚未離場的停車紀錄。
+- 停車區管理到「區域與容量」層級，不另外分配或追蹤個別車格。
+- 不處理車輛轉讓、臨時停車證、退款，以及夜間或假日差別費率等進階情況。
+
+這些規則是**課程專題的模擬設定**，不代表學校實際的停車管理辦法或收費方式。
+
+## 主要功能
+
+- **基本資料管理**：管理校內使用者、車輛、停車區域及學年度停車證。
+- **停車紀錄**：登錄車輛進場、離場，依停車證狀態及停車區費率計算費用。
+- **帳號與權限**：使用 Flask-Login 管理登入狀態，區分管理員（Admin）與檢視者（Viewer）。
+- **統計儀表板**：查看停車量、進場時段、停留時間、停車區使用狀況與臨停收入。
+- **延伸分析**：比較學期與暑期的停車變化、不同身分別的使用情形、停車區尖峰使用率及停車證使用率。
+- **綜合查詢**：整合車主、車輛、停車證及歷史停車紀錄，並提供待處理項目查詢。
+
+## 資料庫設計
+
+系統以五張業務資料表為主，另設一張登入帳號表：
+
+| 資料表 | 用途 |
+| --- | --- |
+| `CampusUser` | 校內使用者基本資料 |
+| `Vehicle` | 已登記車輛及所屬使用者 |
+| `ParkingPermit` | 學年度停車證與付款資料 |
+| `ParkingArea` | 停車區域、車種、容量與費率 |
+| `ParkingRecord` | 車輛進出、停車位置與費用紀錄 |
+| `LoginAccount` | 網站登入帳號與操作權限 |
+
+一位校內使用者可以登記多台車，一台車可以在不同學年度持有停車證。每筆停車紀錄對應一個停車區域，並以車牌號碼辨識車輛，因此未登記的來賓車輛也可以留下臨停紀錄，不必先建立 `Vehicle` 資料。
+
+`LoginAccount` 用於網站操作權限，與業務資料中的 `CampusUser` 分開管理。
+
+## 技術架構
+
+- **後端**：Python 3.12、Flask、Flask-Login
+- **資料庫**：PostgreSQL、SQLAlchemy、Flask-Migrate（Alembic）
+- **前端**：Jinja2、Bootstrap、JavaScript、Chart.js
+- **API**：Flask REST API（`/api/v1`）
+- **測試與部署**：pytest、Gunicorn、Render
+
+## 本機執行
+
+建議使用 Python 3.12，並準備可連線的 PostgreSQL 資料庫。
+
+### 1. 安裝套件
 
 ```bash
-# 下載後，進入專案
+git clone https://github.com/sidra-asa/project_3_parking.git
 cd project_3_parking
 python -m venv .venv
-
-# macOS/Linux
-source .venv/bin/activate
-# Windows PowerShell: .venv\Scripts\Activate.ps1
-
+source .venv/bin/activate  # Windows PowerShell：.venv\Scripts\Activate.ps1
 pip install -r requirements-dev.txt
-cp .env.example .env   # Windows 可手動複製
 ```
 
-編輯 `.env`；填寫學校 PostgreSQL 的 **主機、資料庫、帳號、密碼、TLS 參數**。請勿上傳 `.env`。
+### 2. 設定環境變數
+
+複製範例設定檔：
+
+```bash
+cp .env.example .env
+```
+
+在 `.env` 中設定資料庫連線及 Flask 的 `SECRET_KEY`：
 
 ```dotenv
 DATABASE_URL=postgresql+psycopg://USERNAME:PASSWORD@DB_HOST:5432/DB_NAME?sslmode=require
-SECRET_KEY=PASTE_A_LONG_RANDOM_VALUE
+SECRET_KEY=REPLACE_WITH_A_RANDOM_SECRET
 COOKIE_SECURE=0
 BEHIND_PROXY=0
 ```
 
-因使用Flask-Login，故需產生 Session Secret，用於保護Session Cookie：
+可用下列指令產生隨機金鑰：
 
 ```bash
 python -c "import secrets; print(secrets.token_urlsafe(48))"
 ```
 
-如密碼含 `@ : / ? #` 等特殊字元，需先對密碼做 URL 編碼。若資料庫提供 CA 憑證，請使用正確的 TLS 驗證設定（例如 `sslmode=verify-full`）。
+資料庫密碼若包含 URL 特殊字元，需先進行編碼；TLS 驗證方式則依資料庫服務的設定調整。請勿將含帳號、密碼或金鑰的 `.env` 上傳至 GitHub。
 
+### 3. 建立資料表並啟動網站
 
 ```bash
-
-# 建立資料表
 flask --app wsgi db upgrade
 flask --app wsgi create-admin
 flask --app wsgi run --debug --port 8000
 ```
 
-在 `create-admin` 互動式提示輸入管理員名稱與長度至少 12 字元的密碼；不提供預設密碼。
+`create-admin` 會提示輸入管理員帳號與密碼，密碼長度至少 12 個字元。啟動後可開啟 <http://127.0.0.1:8000> 登入。
 
-瀏覽 [http://127.0.0.1:8000](http://127.0.0.1:8000)。
+## 示範資料
 
-### 載入示範資料 (Optional)
+為了展示多筆資料之間的關聯和分析結果，專案提供模擬資料產生器。預設資料規模如下：
 
-僅限空白且已獲授權的**測試資料庫**，執行以下命令產生，資料包含 **49 個虛構停車區、1,500 位使用者、3,500 台車、1,200 張停車證與 30,000 筆停車紀錄（其中 450 筆尚未離場）**：
+| 資料 | 筆數 |
+| --- | ---: |
+| 校內使用者 | 13,000 |
+| 已登記車輛 | 6,641 |
+| 學年度停車證 | 6,641 |
+| 停車區域 | 49 |
+| 停車紀錄 | 30,000 |
+
+停車情境設定於 **2026 年 6 月 1 日至 6 月 28 日**，涵蓋一般上課日、考試期間、週末及暑期開始後的使用變化。預設統計快照時間為 **2026 年 6 月 28 日 18:00（臺灣時間）**。未離場的紀錄由模擬行程在快照時間的狀態決定，不是固定產生某個筆數。
+
+停車區名稱及容量參考校園停車位置資料，包含 28 個汽車停車區（共 870 格）與 21 個機車停車區（共 6,306 格）；使用者、車輛、停車紀錄及費率等屬課程模擬資料，不代表學校實際停車情形或正式收費標準。
+
+**請僅在已獲授權、且尚無業務資料的測試資料庫執行匯入**：
 
 ```bash
 flask --app wsgi seed-demo --yes
 ```
 
-`seed-demo` 若偵測到已有資料，會拒絕匯入。
-
-資料涵蓋 **2026/05/01–2026/10/31** 的虛構歷史停車紀錄，以及執行當下的少量未離場紀錄。預設使用固定亂數種子 `20261103`，模擬開學／暑假、平假日及進場尖峰差異；資料產生器會防止同車停車時間重疊、車種與停車區不符、停車場容量超額，以及使用無效停車證。不同環境執行的「進行中」紀錄時間會依實際執行時間調整。
-
-若希望連進行中紀錄的時間都完全相同，可明確指定快照時間：
+匯入功能會檢查主要業務資料表是否已有資料；若已有紀錄，就不會執行。若只想檢查模擬資料的關聯性和規則，不必連接資料庫，可執行：
 
 ```bash
-flask --app wsgi seed-demo --yes --records 30000 --active 450 --seed 20261103 --as-of '2026-11-03T18:00:00+08:00'
-```
-
-`--records` 是包含進行中紀錄的總筆數。初始匯入使用每 1,000 筆 flush、最後一次 commit；若中途失敗會 rollback，請勿在既有資料庫上重複執行。
-
-### 離線產生 CSV（不連接資料庫）
-
-若想先檢查 30,000 筆資料，可直接使用純 Python 產生五份 CSV：
-
-```bash
-python scripts/export_demo_csv.py --output demo_data_30000
 python scripts/validate_demo_data.py
 ```
 
-產出的五份 CSV 包括 `campus_user.csv`、`vehicle.csv`、`parking_area.csv`、`parking_permit.csv` 與 `parking_record.csv`，另附 `summary.json`。**CSV 的 `id` 與 `*_ref` 是離線資料的相互參照鍵；直接用 SQL COPY 匯入含 identity 欄位的正式 Schema 時還需處理主鍵序列與 FK 匯入順序，因此建議優先使用 `seed-demo` 完成資料庫匯入。**
+驗證內容包括車輛與車主關聯、停車證對應、車種和停車區相符、停車時間不重疊，以及區域容量限制等。模擬資料採固定亂數種子，便於重現分析結果。
 
-所有停車區名稱、費率與紀錄都是虛構資料。49 個停車區按車種分為汽車 28 個、機車 21 個；總容量依先前討論設定為汽車 870 位、機車 6,306 位，但每區容量與名稱為示範分配，**不是官方停車區清冊**。
+## Render 部署
 
-## 2. Render 免費雲端部署
+專案提供 `render.yaml`，可使用 Render Blueprint 部署 Flask 網站：
 
-1. 將此目錄上傳到自己的 GitHub Repository；再次確認 `.env` 已被 `.gitignore` 排除。
-2. 在 Render 建立 **Blueprint**，選擇 Repository 的 `render.yaml`。如果你的帳號支援 Free Web Service，選用免費方案。Render 的免費服務可能閒置休眠／冷啟動，也可能隨方案政策調整。
-3. 在 Render 設定 `DATABASE_URL`（指向學校 PostgreSQL），`SECRET_KEY` 由 Blueprint 隨機產生；`COOKIE_SECURE=1`、`BEHIND_PROXY=1` 已設定。
-4. **部署前**先用本機指向同一個有權限的 PostgreSQL Schema 執行 `flask --app wsgi db upgrade`，確保六張資料表存在；建立第一個管理員帳號。
-5. Render 在 `https://<service-name>.onrender.com/login` 提供 HTTPS 登入網址。
+1. 將專案推送到 GitHub，並確認 `.env` 不在版本控制中。
+2. 在 Render 選擇 Blueprint，連接此 Repository。
+3. 設定 `DATABASE_URL` 等環境變數；`SECRET_KEY` 由 Blueprint 自動產生。
+4. 首次部署前，先在有權限的環境中執行資料庫 migration，並建立管理員帳號。
+5. 部署完成後，使用 Render 提供的 HTTPS 網址登入。
 
-> 本專案預設 **不在雲端每次啟動時執行 Migration**，避免服務休眠喚醒或重新部署時未經確認就變更學校資料庫。未來 Schema 升級，請先備份並手動執行 `flask db upgrade`。
+`render.yaml` 不會在每次網站啟動時自動修改資料庫結構。後續若調整 Schema，應先備份並由管理者執行 migration。Render 免費方案是否可用，以及閒置休眠限制，依平台當時政策為準。
 
+## API 與權限
 
+網站資料操作主要經由 `/api/v1` 下的 JSON API 完成，包含登入、帳號管理、基本資料 CRUD、車輛進出場、付款及分析查詢。
 
-## 3. REST API
+系統使用 Session Cookie 驗證登入狀態，修改資料的操作由後端檢查管理員權限，並以 CSRF Token 保護狀態變更請求。Viewer 可以瀏覽資料及分析結果，但不能修改業務資料。
 
-全部 API 前綴：`/api/v1`。除登入外均需 Session 登入；資料修改及帳號管理只允許 ADMIN。詳見 [`docs/API.md`](docs/API.md)。
+常用 API 類別：
 
-| 功能 | API |
-|---|---|
-| 登入 / 登出 | `POST /auth/login`，`POST /auth/logout` |
-| 目前帳號 | `GET /auth/me` |
-| 帳號管理 | `GET/POST /accounts`、`GET/PATCH /accounts/{id}` |
-| 業務 CRUD | `/campus-users`、`/vehicles`、`/parking-permits`、`/parking-areas` |
-| 停車紀錄 | `/parking-records`、`/{id}/exit`、`/{id}/pay` |
-| 停車證付款 | `/parking-permits/{id}/pay` |
-| 分析 | `/analytics/overview`、`by-area`、`by-hour`、`duration`、`occupancy`、`permits`、`revenue` |
+| 類別 | 路徑範例 |
+| --- | --- |
+| 登入 | `/api/v1/auth/login` |
+| 校內使用者 | `/api/v1/campus-users` |
+| 車輛 | `/api/v1/vehicles` |
+| 停車區域 | `/api/v1/parking-areas` |
+| 停車證 | `/api/v1/parking-permits` |
+| 停車紀錄 | `/api/v1/parking-records` |
+| 統計分析 | `/api/v1/analytics/overview` |
+| 延伸分析 | `/api/v1/analytics/daily-trend` |
+| 車主綜合查詢 | `/api/v1/campus-users/{user_id}/profile` |
+| 待處理項目 | `/api/v1/management/pending` |
 
-API 回傳 `{"data":...}`，列表回傳 `pagination`；錯誤回傳 `{"error":{"code":...,"message":...}}`。列表查詢預設 20 筆，每頁最多 100 筆。
+## 測試
 
-**安全性：** 使用同源 Session Cookie，不使用 JWT；所有狀態變更 API（含登入）必須帶 `X-CSRFToken`，取自網頁中的 `<meta name="csrf-token">`；網站已由 `api.js` 自動處理。管理員角色在後端檢查，前端隱藏按鈕只是便利性，不是權限措施。請勿把帳號密碼寫進 JS/HTML。公開展示時建議建立唯讀 Viewer 帳號。正式上線前建議再加入登入嘗試限制、監控與備份。
-
-## 4. 測試
-
-測試環境強制使用獨立 SQLite 暫存檔，**不會連到學校 PostgreSQL**：
+執行自動化測試：
 
 ```bash
 pytest -q
 ```
 
-`tests/test_auth.py`、`tests/test_parking.py` 驗證 Flask 主要流程；`tests/test_static_structure.py` 驗證必要檔案與模型；PostgreSQL 特有的 Alembic migration、時間欄位與 SQL 聚合仍建議在**授權的空白 PostgreSQL 測試 Schema**做整合驗收。
+測試使用獨立的 SQLite 暫存資料庫，不會寫入 `.env` 指向的 PostgreSQL。涉及 PostgreSQL 特有行為或 migration 的部分，仍應在獨立測試資料庫驗證。
 
-## 5. 目錄結構
+## 專案結構
 
 ```text
 project_3_parking/
 ├── app/
-│   ├── __init__.py       # Application Factory / CLI
-│   ├── extensions.py     # DB, LoginManager, CSRF, Migrate
-│   ├── models/           # 六張資料表
-│   ├── api/              # Auth, Accounts, CRUD, Parking, Analytics
-│   ├── services/         # 業務邏輯、虛構測試資料
-│   ├── web/routes.py     # HTML 頁面
-│   ├── templates/        # Bootstrap + Jinja2
-│   └── static/           # JavaScript / CSS
-├── migrations/           # Alembic 初始 migration
-├── sql/schema.sql        # PostgreSQL Schema 參考版
-├── docs/                # ERD + API 文件
-├── tests/               # pytest
-├── config.py
-├── wsgi.py
-├── requirements.txt
-├── requirements-dev.txt
-├── render.yaml
-├── Dockerfile
-└── .env.example
+│   ├── api/                 # REST API
+│   ├── models/              # 資料模型
+│   ├── services/            # 業務邏輯與資料匯入
+│   ├── web/                 # 頁面路由
+│   ├── templates/           # HTML 模板
+│   └── static/              # JavaScript、CSS
+├── migrations/              # 資料庫版本變更
+├── scripts/                 # 示範資料工具
+├── sql/                     # 資料庫結構參考
+├── tests/                   # 自動化測試
+├── campus_parking_areas.py  # 停車區參考資料
+├── demo_data_generator.py   # 模擬資料產生器
+├── config.py                # 環境設定
+├── wsgi.py                  # Flask 啟動入口
+├── render.yaml              # Render 部署設定
+└── requirements.txt
 ```
 
-## 限制與注意事項
+## 注意事項
 
-- 沒有提供自動註冊功能，請使用 CLI 或 ADMIN 建立 LoginAccount。
-- 為避免歷史紀錄失真，已離場／已付款的停車紀錄不可刪除；開放中的紀錄可編輯進場時間或取消。
-- 部分跨資料表條件（車種相符、停車證有效）由 Service 層驗證；寫入資料請通過 API，避免直接 SQL 繞過規則。
-- Chart.js 與 Bootstrap 的 JS/CSS 經由 CDN 載入，離線本機部署需自行下載並改用本地靜態檔案。
-- 即時使用率是「目前未離場車輛 / 區域容量」，不是尖峰期間的平均使用率；Dashboard 的日期篩選按進場日計算，收入按付款日計算。
-- 本專案只作課堂示範，不是學校正式收費規則或官方即時車位資訊。
+本專案為課程實作，停車紀錄、費率與分析數據均為模擬情境，不是國立中山大學的正式停車管理服務。示範資料中的「目前停車數」是模擬快照或查詢時間點的結果，不代表真實的即時車位資訊。
+
+網站目前沒有開放自行註冊；帳號由管理員建立。若要公開展示，建議使用僅有查詢權限的 Viewer 帳號，並避免將正式資料庫憑證放入程式碼或公開檔案中。
