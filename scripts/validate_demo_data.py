@@ -6,7 +6,6 @@ from datetime import datetime, timezone
 import heapq
 from pathlib import Path
 import sys
-
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from demo_data_generator import (  # noqa: E402
@@ -29,11 +28,13 @@ def validate(rows, expected_records=30000, as_of=DEFAULT_AS_OF):
     expected_area = {(typ, no): (name, cap) for typ, table in
                      (('CAR', CAR_AREAS), ('MOTORCYCLE', MOTORCYCLE_AREAS))
                      for no, name, cap in table}
-    expected_users = sum(USER_COUNTS.values())
     expected_vehicles = sum(PERMIT_COUNTS.values())
-
-    assert len(users) == expected_users
-    assert Counter(u['identity_type'] for u in users.values()) == USER_COUNTS
+    # Only permit applicants/vehicle owners are exported, not the entire 13k pool.
+    owner_refs = {v['user_ref'] for v in vehicles.values()}
+    assert set(users) == owner_refs, 'campus_user must contain only registered vehicle owners'
+    assert sorted(users) == list(range(1, len(users) + 1))
+    actual_counts = Counter(u['identity_type'] for u in users.values())
+    assert all(0 < actual_counts[typ] <= cap for typ, cap in USER_COUNTS.items())
     assert len(vehicles) == expected_vehicles
     assert len({v['plate_no'] for v in vehicles.values()}) == expected_vehicles
     assert sum(v['vehicle_type'] == 'CAR' for v in vehicles.values()) == PERMIT_COUNTS['CAR']
@@ -50,7 +51,6 @@ def validate(rows, expected_records=30000, as_of=DEFAULT_AS_OF):
     assert all((a['area_name'], a['capacity']) == expected_area[(a['vehicle_type'], a['map_no'])]
                for a in areas.values())
     assert len(rows['parking_record']) == expected_records
-
     records = sorted(rows['parking_record'], key=lambda r: r['entry_time'])
     open_plates = set()
     last_by_plate, last_by_user = {}, {}
@@ -75,7 +75,6 @@ def validate(rows, expected_records=30000, as_of=DEFAULT_AS_OF):
                 'user simultaneously driving multiple vehicles', r['id'], uid)
         else:
             assert plate.startswith('DEMO-GC-' if area['vehicle_type'] == 'CAR' else 'DEMO-GM-')
-
         if r['permit_ref'] is None:
             assert vehicle is None, ('non-guest without permit', r['id'])
             assert area['map_no'] in (CAR_VISITOR_NUMBERS if area['vehicle_type'] == 'CAR'
@@ -93,12 +92,10 @@ def validate(rows, expected_records=30000, as_of=DEFAULT_AS_OF):
                     assert not area['visitor']
             else:
                 assert not area['visitor']
-
         heap = occupancy[area['id']]
         while heap and heap[0] <= start:
             heapq.heappop(heap)
         assert len(heap) < area['capacity'], ('capacity exceeded', area['id'], r['id'])
-
         if r['exit_time'] is None:
             assert r['parking_fee'] is None
             assert r['payment_method'] is None and r['paid_at'] is None
@@ -126,7 +123,6 @@ def validate(rows, expected_records=30000, as_of=DEFAULT_AS_OF):
             last_by_user[vehicle['user_ref']] = until
         phase_counts[_phase(local_day)] += 1
         by_date[local_day] += 1
-
     assert len(open_plates) > 0, 'snapshot has no parked cars'
     # These relative trends are the intended simulation, not measured counts.
     if expected_records == 30000:

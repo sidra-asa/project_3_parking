@@ -3,15 +3,16 @@
 This is not an official university dataset. Area labels/capacities are imported
 from the existing project file; population, permits, arrivals and fees are
 illustrative. No database connection is made by this module.
-
 Scenario: 2026-06-01 through 2026-06-28 (114 academic year), including
 regular classes, final exams, summer vacation and the Dragon Boat holiday.
 All 30,000 *entries* are on or before the 2026-06-28 18:00 +08:00 snapshot.
 A trip still parked at that instant has exit_time=None, rather than being
 added later as an unrelated synthetic open-stay record.
+
+Only applicants with registered vehicles are exported to campus_user. The
+13,000-person roster is a temporary synthetic candidate pool, not the output.
 """
 from __future__ import annotations
-
 from collections import Counter, defaultdict
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal, ROUND_CEILING
@@ -24,7 +25,6 @@ from campus_parking_areas import (
     CAR_AREAS, MOTORCYCLE_AREAS, CAR_VISITOR_NUMBERS,
     MOTORCYCLE_VISITOR_NUMBERS, CAR_STUDENT_PERMIT_NUMBERS,
 )
-
 TAIPEI = ZoneInfo('Asia/Taipei')
 START_DATE = date(2026, 6, 1)
 END_DATE = date(2026, 6, 28)
@@ -32,9 +32,9 @@ DEFAULT_AS_OF = datetime(2026, 6, 28, 18, 0, tzinfo=TAIPEI)
 HOLIDAYS = frozenset({date(2026, 6, 19)})
 # Weekly proportions, deliberately NOT observed NSYSU traffic statistics.
 WEEKLY_SHARES = (9900, 8900, 5200, 6000)
+# Candidate pool size and identity mix, not the number of exported campus users.
 USER_COUNTS = {'STUDENT': 11330, 'FACULTY': 740, 'STAFF': 930}
 PERMIT_COUNTS = {'CAR': 2033, 'MOTORCYCLE': 4608}
-
 STUDENT_DEPARTMENTS = (
     '中國文學系', '外國語文學系', '音樂學系', '劇場藝術學系',
     '資訊工程學系', '電機工程學系', '機械與機電工程學系',
@@ -110,6 +110,25 @@ def _make_vehicles(rng, users):
                                  plate_no=f'DEMO-{"C" if typ == "CAR" else "M"}-{k:05d}',
                                  vehicle_type=typ, user_ref=owner))
     return vehicles
+
+
+def _keep_only_applicants(users, vehicles):
+    """Keep only registered-vehicle owners, preserving all Vehicle foreign keys.
+
+    Retain the 13,000-person candidate pool during owner allocation so the
+    original seed and traffic profile remain reproducible. Then prune and
+    renumber the exported campus users; update Vehicle.user_ref accordingly.
+    Visitors do not appear in campus_user or vehicle.
+    """
+    owners = {v['user_ref'] for v in vehicles}
+    applicants = [dict(user) for user in users if user['id'] in owners]
+    id_map = {user['id']: index for index, user in enumerate(applicants, start=1)}
+
+    for user in applicants:
+        user['id'] = id_map[user['id']]
+    for vehicle in vehicles:
+        vehicle['user_ref'] = id_map[vehicle['user_ref']]
+    return applicants
 
 
 def _make_permits(rng, vehicles, users):
@@ -211,7 +230,6 @@ def _dept_zone(department):
         return 'arts'
     return 'administration'
 
-
 ZONE_AREAS = {
     'CAR': {
         'engineering': (7, 9, 10, 11), 'marine': (18, 19, 20, 21, 22, 23),
@@ -309,10 +327,10 @@ def build_demo_data(*, count=30000, active_count=None, seed=20261103, as_of=None
         raise ValueError('as_of must fall on 2026-06-28 (the final simulated day)')
     if not time(18, 0) <= snapshot.astimezone(TAIPEI).time() <= time(23, 59, 59):
         raise ValueError('as_of must be between 18:00 and 23:59 Taiwan time')
-
     rng = random.Random(seed)
     users, areas = _make_users(rng), _make_areas()
     vehicles = _make_vehicles(rng, users)
+    users = _keep_only_applicants(users, vehicles)
     permits = _make_permits(rng, vehicles, users)
     profiles = _user_profiles(rng, vehicles, users)
     paid = {p['vehicle_ref']: p for p in permits if p['paid_at'] is not None}
@@ -327,7 +345,6 @@ def build_demo_data(*, count=30000, active_count=None, seed=20261103, as_of=None
     for typ in ('CAR', 'MOTORCYCLE'):
         pools[(typ, False)] = [v for v in vehicles if v['vehicle_type'] == typ and v['id'] in paid]
         pools[(typ, True)] = [v for v in guest_vehicles if v['vehicle_type'] == typ]
-
     areas_by_kind = {}
     for typ in ('CAR', 'MOTORCYCLE'):
         for visitor in (False, True):
@@ -339,7 +356,6 @@ def build_demo_data(*, count=30000, active_count=None, seed=20261103, as_of=None
     favorite = {}
     records = []
     daily_targets = _daily_counts(count, snapshot.astimezone(TAIPEI))
-
     # Build candidates day-by-day; then process in global chronological order.
     # Each vehicle is sampled at most once per day; multi-day dorm stays are
     # excluded again while actual arrivals are processed.
@@ -368,7 +384,6 @@ def build_demo_data(*, count=30000, active_count=None, seed=20261103, as_of=None
                 entry = _arrival(rng, day, visitor, profiles.get(vehicle['id']), snapshot)
                 proposed.append((entry, rng.random(), day, typ, visitor, vehicle))
     proposed.sort(key=lambda t: (t[0], t[1]))
-
     for entry, _, day, typ, visitor, candidate in proposed:
         backup = day_backups[(day, typ, visitor)]
         vehicle = candidate
@@ -394,7 +409,6 @@ def build_demo_data(*, count=30000, active_count=None, seed=20261103, as_of=None
                        and a['map_no'] in CAR_STUDENT_PERMIT_NUMBERS]
         else:
             options = areas_by_kind[(typ, False)]
-
         for area in options:
             heap = area_exits[area['id']]
             while heap and heap[0] <= entry:
@@ -434,7 +448,6 @@ def build_demo_data(*, count=30000, active_count=None, seed=20261103, as_of=None
         if vehicle['user_ref'] is not None:
             last_user_exit[vehicle['user_ref']] = actual_exit
         heapq.heappush(area_exits[area['id']], actual_exit)
-
     if len(records) != count:
         raise AssertionError('the requested record count was not generated')
     return dict(campus_user=users, vehicle=vehicles, parking_area=areas,

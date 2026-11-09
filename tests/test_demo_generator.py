@@ -9,7 +9,7 @@ def test_seed_30000_integrity():
     assert validate(rows)
     s = summarize_dataset(rows)
     assert s['records'] == 30000
-    assert s['campus_users'] == 13000
+    assert s['campus_users'] == 4834
     assert s['vehicles'] == 6641
     assert s['permits'] == 6641
     assert s['closed_records'] + s['active_records'] == 30000
